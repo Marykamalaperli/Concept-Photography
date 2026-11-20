@@ -1,11 +1,14 @@
 import postgres from 'npm:postgres@3.4.9';
 import { createApi } from '../_shared/workspace-api.js';
+import { supabaseAdminAuth } from '../_shared/supabase-admin.js';
 import { numericTypes, postgresAdapter } from '../_shared/postgres-adapter.js';
 
 const databaseUrl = Deno.env.get('SUPABASE_DB_URL');
 const siteOrigin = Deno.env.get('CONCEPT_SITE_ORIGIN');
-if (!databaseUrl || !siteOrigin || new URL(siteOrigin).origin !== siteOrigin) {
-  throw new Error('Set SUPABASE_DB_URL and CONCEPT_SITE_ORIGIN before serving the workspace.');
+const supabaseUrl = Deno.env.get('SUPABASE_URL');
+const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+if (!databaseUrl || !supabaseUrl || !anonKey || !siteOrigin || new URL(siteOrigin).origin !== siteOrigin) {
+  throw new Error('Supabase sign-in requires a project URL, anon key, database URL, and allowed site origin.');
 }
 
 const dbHost = new URL(databaseUrl).hostname;
@@ -22,7 +25,7 @@ const sql = postgres(databaseUrl, {
 
 const api = createApi(postgresAdapter(sql), {
   bearer: true,
-  setupToken: Deno.env.get('ADMIN_SETUP_TOKEN'),
+  adminAuth: supabaseAdminAuth({ url: supabaseUrl, apiKey: anonKey }),
   siteOrigin,
 });
 

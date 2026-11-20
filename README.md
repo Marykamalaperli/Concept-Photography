@@ -11,7 +11,7 @@ npm ci
 npm start
 ```
 
-Open http://localhost:3000 and choose **Set up the first admin account** on the sign-in screen. The workspace starts empty and stores its data in `data/workforce.sqlite`. Set `DATABASE_PATH` to use another SQLite file and `PORT` to use another local port. On upgrade, the original built-in sample accounts and their work are hidden. Existing employee records can be enrolled by setting a password in **Employees**.
+Create or update the local development admin with `npm run create-local-admin -- admin@example.com`. Enter the password at the terminal prompt, then sign in at http://localhost:3000. The workspace starts empty and stores its data in `data/workforce.sqlite`. Set `DATABASE_PATH` to use another SQLite file and `PORT` to use another local port. On upgrade, the original built-in sample accounts and their work are hidden. Existing employee records can be enrolled by setting a password in **Employees**.
 
 ## Admin workflow
 
@@ -34,7 +34,7 @@ Scheduled work creates an in-app reminder when its start enters the 30-minute wi
 
 ## Connect the GitHub Pages site to Supabase
 
-The Pages build points to the project in [supabase/project.json](supabase/project.json). Supabase Postgres holds the shared studio records and the `concept-api` Edge Function handles account creation, sign-in, and permissions. It uses the workspace’s existing password and session system so the admin can create employee credentials. The private database schema is accessible through the function, and the website bundle contains only its public URL.
+The Pages build points to the project in [supabase/project.json](supabase/project.json). Supabase Postgres holds the shared studio records and the `concept-api` Edge Function handles account creation, sign-in, and permissions. Admins sign in through Supabase Authentication. Employees use the credentials the admin creates in the workspace. The private database schema is accessible through the function, and the website bundle contains only its public URL.
 
 1. In the GitHub repository, open **Settings → Secrets and variables → Actions → Secrets**. Add the following repository secrets. Keep the values in GitHub Secrets or Supabase secrets.
 
@@ -42,14 +42,22 @@ The Pages build points to the project in [supabase/project.json](supabase/projec
    | --- | --- |
    | `SUPABASE_ACCESS_TOKEN` | A Supabase access token from the account that can manage the project. |
    | `SUPABASE_DB_PASSWORD` | The project’s Postgres database password. |
-   | `SUPABASE_ADMIN_SETUP_TOKEN` | A randomly generated URL-safe value of at least 24 characters for one-time admin setup. You can also set `ADMIN_SETUP_TOKEN` directly in Supabase Edge Function secrets. |
 
 2. Run **Actions → Deploy Supabase backend → Run workflow** on `main`. It applies the database migration, sets the allowed website origin, deploys the function, and checks the session endpoint.
-3. Open the [GitHub Pages site](https://marykamalaperli.github.io/Concept-Photography/) and choose **Set up the first admin account** to create the account using the setup token. Use the resulting email and password to sign in to the admin dashboard. A new Supabase database starts empty. Create employee accounts after setting up the admin.
+3. In **Supabase → Authentication → Users**, use **Add user** to create the admin with an email and password. Enable **Auto Confirm User** when creating it.
+4. In the project’s **SQL Editor**, authorize that Auth user as the studio admin. Replace the example email with the email you just created.
+
+   ```sql
+   select concept.authorize_admin('admin@example.com');
+   ```
+
+5. Sign in with the admin email and password. [Open Concept Photography](https://marykamalaperli.github.io/Concept-Photography/)
+
+Authorizing a Supabase user preserves the existing admin profile and studio records. Re-run the SQL statement after changing the admin email in Supabase or transferring admin access. The authorization step ends the previous admin sessions. Employees continue signing in with their existing workspace accounts.
 
 The live Pages build uses `USE_SUPABASE=1`. Run `USE_SUPABASE=1 npm run build:pages` to reproduce it in `dist/`. A configured `WORKSPACE_URL` repository variable overrides Supabase and retains the standalone Node sign-in link. Remove the override and rerun **Deploy GitHub Pages** to use Supabase instead.
 
-The local Node app still uses SQLite. To host that app separately, serve it behind HTTPS with a persistent SQLite volume, set `SECURE_COOKIES=1`, and set the one-time `ADMIN_SETUP_TOKEN` as a server secret before setup. The reverse proxy must preserve the public Host header.
+The local Node app uses SQLite. To host it separately, serve it behind HTTPS with a persistent SQLite volume and set `SECURE_COOKIES=1`. The reverse proxy must preserve the public Host header.
 
 ## Verify
 

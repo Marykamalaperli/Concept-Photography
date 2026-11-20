@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { authenticatedEmployee, createSession, endSession, hashPassword, passwordMatches } from './accounts.js';
 import { mapsLocation } from './maps.js';
 import { attendanceTransition, shootSite } from './attendance-policy.js';
@@ -100,19 +100,6 @@ async function readBody(req, siteOrigin) {
   }
 }
 
-function localSetup(req) {
-  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) &&
-    /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(req.headers.host || '') &&
-    !req.headers.forwarded && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-host'];
-}
-
-function setupAllowed(req, supplied, configured, bearer) {
-  if (!configured) return !bearer && localSetup(req);
-  if (typeof supplied !== 'string') return false;
-  const checksum = (value) => createHash('sha256').update(value).digest();
-  return timingSafeEqual(checksum(configured), checksum(supplied));
-}
-
 async function siteFrom(body) {
   try {
     return await mapsLocation(body);
@@ -121,7 +108,7 @@ async function siteFrom(body) {
   }
 }
 
-export function createApi(db, { bearer = false, secureCookies = false, setupToken, siteOrigin } = {}) {
+export function createApi(db, { bearer = false, secureCookies = false, adminAuth, siteOrigin } = {}) {
   const loginAttempts = new Map();
   const sessionOptions = { bearer, secureCookies };
 
@@ -153,10 +140,6 @@ export function createApi(db, { bearer = false, secureCookies = false, setupToke
     }
     if (attempt.count >= 12) throw new RequestError('Too many sign-in attempts. Try again in a few minutes.', 429);
     attempt.count += 1;
-  }
-
-  async function needsSetup(store = db) {
-    return !await store.get('SELECT 1 FROM employees WHERE is_admin = 1 AND archived = 0 AND password_hash IS NOT NULL');
   }
 
   function idValue(value) {
@@ -237,43 +220,37 @@ export function createApi(db, { bearer = false, secureCookies = false, setupToke
     };
   }
 
-  async function bootstrap(req, res, body, now) {
-    if (!await needsSetup()) throw new RequestError('The admin account is already set up.', 409);
-    await throttle(req, now);
-    if (!setupAllowed(req, body.setupToken, setupToken, bearer)) {
-      throw new RequestError('Set up the admin from localhost or enter the server’s setup token.', 403);
-    }
-    const name = text(body.name, 'admin name');
-    const address = email(body.email);
-    const hash = await hashPassword(password(body.password));
-    const id = await db.transaction(async (store) => {
-      if (!await needsSetup(store)) throw new RequestError('The admin account is already set up.', 409);
-      const existing = await store.get('SELECT id, archived FROM employees WHERE email = ?', address);
-      if (existing?.archived) throw new RequestError('Use your company email for the admin account.');
-      if (existing) {
-        await store.run("UPDATE employees SET name = ?, role = 'Administrator', is_admin = 1, password_hash = ? WHERE id = ?", name, hash, existing.id);
-        return existing.id;
-      }
-      return (await store.get(`
-        INSERT INTO employees (name, email, role, color, is_admin, password_hash)
-        VALUES (?, ?, 'Administrator', 'peach', 1, ?) RETURNING id
-      `, name, address, hash)).id;
-    });
-    loginAttempts.delete(req.socket.remoteAddress);
-    return createSession(db, id, now, res, sessionOptions);
-  }
-
   async function signIn(req, res, body, now) {
     await throttle(req, now);
     const address = email(body.email);
-    if (typeof body.password !== 'string' || body.password.length > 128) throw new RequestError('Invalid email or password.', 401);
-    const person = await db.get('SELECT id, password_hash FROM employees WHERE email = ? AND archived = 0', address);
-    if (!await passwordMatches(body.password, person?.password_hash)) throw new RequestError('Invalid email or password.', 401);
-    // Recheck in case an admin reset the credential while verification was running.
-    return db.transaction(async (store) => {
-      if ((await store.get('SELECT password_hash FROM employees WHERE id = ? AND archived = 0', person.id))?.password_hash !== person.password_hash) {
-        throw new RequestError('Invalid email or password.', 401);
+    const invalidCredentials = () => new RequestError('Invalid email or password.', 401);
+    if (typeof body.password !== 'string' || body.password.length > 128) throw invalidCredentials();
+
+    const person = await db.get('SELECT id, is_admin, password_hash FROM employees WHERE email = ? AND archived = 0', address);
+    if (person?.is_admin && adminAuth) {
+      const identity = await adminAuth.identity(db, person.id);
+      if (!identity) throw invalidCredentials();
+
+      let verifiedId;
+      try {
+        verifiedId = await adminAuth.authenticate(address, body.password);
+      } catch {
+        throw new RequestError('Supabase sign-in is temporarily unavailable. Try again.', 503);
       }
+      if (verifiedId !== identity.auth_user_id) throw invalidCredentials();
+
+      return db.transaction(async (store) => {
+        const current = await adminAuth.identity(store, person.id);
+        if (current?.auth_user_id !== verifiedId || current.email !== address) throw invalidCredentials();
+        return createSession(store, person.id, now, res, sessionOptions);
+      });
+    }
+
+    if (!await passwordMatches(body.password, person?.password_hash)) throw invalidCredentials();
+    // Recheck in case the employee's credentials changed during verification.
+    return db.transaction(async (store) => {
+      const current = await store.get('SELECT email, password_hash FROM employees WHERE id = ? AND archived = 0', person.id);
+      if (!current || current.email !== address || current.password_hash !== person.password_hash) throw invalidCredentials();
       loginAttempts.delete(req.socket.remoteAddress);
       return createSession(store, person.id, now, res, sessionOptions);
     });
@@ -508,23 +485,15 @@ export function createApi(db, { bearer = false, secureCookies = false, setupToke
 
   return async function api(req, res, path) {
     const now = Date.now();
-    const actor = await authenticatedEmployee(db, req, now, bearer);
-    if (req.method === 'GET' && path === '/api/session') {
-      const setup = await needsSetup();
-      return {
-        actor,
-        needsSetup: setup,
-        setupAvailable: setup && (Boolean(setupToken) || (!bearer && localSetup(req))),
-        requiresSetupToken: setup && (bearer || Boolean(setupToken) || !localSetup(req)),
-      };
-    }
+    let actor = await authenticatedEmployee(db, req, now, bearer);
+    if (actor?.is_admin && adminAuth && !await adminAuth.identity(db, actor.id)) actor = null;
+    if (req.method === 'GET' && path === '/api/session') return { actor };
     if (req.method === 'GET' && path === '/api/state') {
       if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
       return overview(actor, now);
     }
     if (req.method !== 'POST') throw new RequestError('Route not found.', 404);
     const body = await readBody(req, siteOrigin);
-    if (path === '/api/bootstrap') return bootstrap(req, res, body, now);
     if (path === '/api/login') return signIn(req, res, body, now);
     if (path === '/api/logout') return endSession(db, req, res, sessionOptions);
     if (!actor) throw new RequestError('Sign in to open the workspace.', 401);

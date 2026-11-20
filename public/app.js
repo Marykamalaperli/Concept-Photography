@@ -172,43 +172,24 @@ function renderChrome() {
     </div>`;
 }
 
-function showAuthStatus(message = '', retry = true) {
+function showAuthStatus(message = '') {
   const notice = main.querySelector('[data-auth-connection]');
   if (!notice) return;
   notice.hidden = !message;
   notice.querySelector('[role="status"]').textContent = message;
-  notice.querySelector('[data-auth-retry]').hidden = !retry;
 }
 
-function updateAdminSetup() {
-  const button = main.querySelector('[data-auth-setup]');
-  const ready = session?.needsSetup && session.setupAvailable !== false;
-  if (button) button.hidden = !ready;
-  if (session?.needsSetup && !ready) {
-    showAuthStatus('The studio admin needs to configure a setup token before creating the first account.', false);
-  }
-}
-
-function loginPage(setup = false) {
+function loginPage() {
   stopTracking();
   document.body.classList.add('signed-out');
   sidebar.innerHTML = '';
   topbar.innerHTML = '';
-  main.innerHTML = loginView({ setup, requiresSetupToken: session?.requiresSetupToken });
-  updateAdminSetup();
+  main.innerHTML = loginView();
 }
 
 main.addEventListener('click', (event) => {
   if (event.target.closest('[data-auth-retry]')) {
     if (!pending) loadSession();
-    return;
-  }
-  if (event.target.closest('[data-auth-setup], [data-auth-back]')) {
-    if (pending) return;
-    const setup = !!event.target.closest('[data-auth-setup]');
-    if (setup && (!session?.needsSetup || session.setupAvailable === false)) return;
-    loginPage(setup);
-    main.querySelector('input')?.focus();
     return;
   }
   const button = event.target.closest('[data-password-toggle]');
@@ -617,11 +598,11 @@ async function request(path, body) {
   if (!response.ok) {
     if (response.status === 401 && path !== 'login') {
       storeSessionToken(null);
-      if (session?.actor) clearWorkspace({ actor: null, needsSetup: false });
+      if (session?.actor) clearWorkspace({ actor: null });
     }
     throw new Error(payload?.error || 'The workspace could not complete the request. Try again.');
   }
-  if (path === 'login' || path === 'bootstrap') storeSessionToken(payload.token);
+  if (path === 'login') storeSessionToken(payload.token);
   if (path === 'logout') storeSessionToken(null);
   return payload;
 }
@@ -703,7 +684,6 @@ async function loadSession() {
     }
     storeSessionToken(null);
     if (actor()) clearWorkspace(info);
-    else updateAdminSetup();
   } catch {
     if (version === sessionVersion) {
       showAuthStatus('The studio could not connect to its workspace. Retry the connection or ask your studio admin to check the deployment.');
@@ -1019,7 +999,7 @@ document.addEventListener('click', (event) => {
       mutate(button, async () => {
         await request('logout', {});
         history.replaceState(null, '', location.pathname);
-        clearWorkspace({ actor: null, needsSetup: false });
+        clearWorkspace({ actor: null });
       });
       break;
     case 'close': dialog.close(); break;
@@ -1121,11 +1101,11 @@ document.addEventListener('submit', (event) => {
     if (authLabel) {
       sessionVersion++;
       form.setAttribute('aria-busy', 'true');
-      authLabel.textContent = kind === 'login' ? 'Signing in…' : 'Creating account…';
+      authLabel.textContent = 'Signing in…';
     }
     try {
       await request(kind, data);
-      if (kind === 'login' || kind === 'bootstrap') {
+      if (kind === 'login') {
         history.replaceState(null, '', '#dashboard');
         await loadSession();
         return;

@@ -6,6 +6,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { Readable } from 'node:stream';
+import { createApi } from '../supabase/functions/_shared/workspace-api.js';
+import { hashPassword } from '../supabase/functions/_shared/accounts.js';
+import { supabaseAdminAuth } from '../supabase/functions/_shared/supabase-admin.js';
 import { mapsLocation } from '../supabase/functions/_shared/maps.js';
 import { refreshReminders } from '../supabase/functions/_shared/reminders.js';
 import { openStore } from '../store.js';
@@ -49,7 +53,7 @@ test('Maps parsing prefers the pin, handles share redirects, and rejects externa
   await assert.rejects(mapsLocation({ mapsUrl: 'https://example.net/maps?query=0,0', latitude: '0', longitude: '0' }), /Google Maps/);
 });
 
-test('admin setup, assignment access, approvals, ledger, and GPS survive a restart', { timeout: 15000 }, async (t) => {
+test('admin sign-in, assignment access, approvals, ledger, and GPS survive a restart', { timeout: 15000 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'concept-workforce-'));
   const database = join(directory, 'workforce.sqlite');
   let server;
@@ -68,9 +72,8 @@ test('admin setup, assignment access, approvals, ledger, and GPS survive a resta
   }
 
   async function startServer() {
-    const { ADMIN_SETUP_TOKEN: ignoredToken, ...env } = process.env;
     server = spawn(process.execPath, ['server.js'], {
-      env: { ...env, HOST: '127.0.0.1', PORT: '0', DATABASE_PATH: database },
+      env: { ...process.env, HOST: '127.0.0.1', PORT: '0', DATABASE_PATH: database },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     base = await new Promise((resolve, reject) => {
@@ -98,19 +101,27 @@ test('admin setup, assignment access, approvals, ledger, and GPS survive a resta
     };
   }
 
+  const adminCredentials = { email: 'admin@example.com', password: 'Admin example passphrase' };
+  const provision = spawn(process.execPath, ['scripts/create-local-admin.js', adminCredentials.email], {
+    env: { ...process.env, DATABASE_PATH: database },
+    stdio: ['pipe', 'ignore', 'inherit'],
+  });
+  const provisioned = once(provision, 'exit');
+  provision.stdin.end(adminCredentials.password);
+  assert.equal((await provisioned)[0], 0);
   await startServer();
+
   const document = await (await fetch(base)).text();
   assert.match(document, /<h1 id="access-title">Sign in<\/h1>/);
   assert.match(document, /name="email" type="email"/);
   assert.match(document, /name="password" type="password"/);
-  assert.doesNotMatch(document, /Admin Dashboard/);
+  assert.doesNotMatch(document, /Admin Dashboard|[Ss]etup token|[Ss]et up the first admin/);
   const guest = client();
   await guest('state', null, 401);
-  assert.equal((await guest('session')).setupAvailable, true);
+  assert.deepEqual(await guest('session'), { actor: null });
   const admin = client();
-  const adminCredentials = { name: 'Studio Admin', email: 'admin@example.com', password: 'Admin example passphrase' };
-  await admin('bootstrap', adminCredentials);
-  await guest('bootstrap', adminCredentials, 409);
+  await admin('login', adminCredentials);
+  await admin('bootstrap', adminCredentials, 404);
   const empty = await admin('state');
   assert.equal(empty.employees.length, 1);
   assert.deepEqual(empty.tasks, []);
@@ -220,4 +231,53 @@ test('admin setup, assignment access, approvals, ledger, and GPS survive a resta
   assert.equal((await staff('state')).tasks.length, 2);
   await staff('logout', {});
   await staff('state', null, 401);
+});
+
+
+test('hosted admin access requires the linked Supabase identity', async (t) => {
+  const store = openStore(new DatabaseSync(':memory:'));
+  t.after(() => store.close());
+  const oldPassword = 'Legacy admin password example';
+  store.prepare(`
+    INSERT INTO employees (id, name, role, email, color, is_admin, password_hash)
+    VALUES (1, 'Studio Admin', 'Administrator', 'admin@example.com', 'peach', 1, ?)
+  `).run(await hashPassword(oldPassword));
+
+  let confirmed = false;
+  let providerId = 'another-supabase-user';
+  const adminAuth = supabaseAdminAuth({
+    url: 'https://studio.example.supabase.co',
+    apiKey: 'example-anon-key',
+    async fetchAuth(url, { body, headers }) {
+      assert.equal(url.pathname, '/auth/v1/token');
+      assert.equal(url.searchParams.get('grant_type'), 'password');
+      assert.equal(headers.apikey, 'example-anon-key');
+      assert.equal(JSON.parse(body).email, 'admin@example.com');
+      return Response.json({ user: { id: providerId } });
+    },
+  });
+  adminAuth.identity = async () => confirmed ? { auth_user_id: 'linked-admin', email: 'admin@example.com' } : null;
+
+  const api = createApi(sqliteAdapter(store), { adminAuth });
+  let cookie;
+  async function call(method, path, body) {
+    const headers = { cookie, ...(body ? { 'content-type': 'application/json' } : {}) };
+    const req = Object.assign(Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []), {
+      method, headers, socket: { remoteAddress: '127.0.0.1' },
+    });
+    return api(req, { setHeader(_name, value) { cookie = value.split(';')[0]; } }, '/api/' + path);
+  }
+
+  const login = (password = oldPassword) => call('POST', 'login', { email: 'admin@example.com', password });
+  await assert.rejects(login(), { status: 401 });
+  confirmed = true;
+  await assert.rejects(login(), { status: 401 });
+  providerId = 'linked-admin';
+  await login('Supabase admin password example');
+  const session = await call('GET', 'session');
+  assert.equal(session.actor.is_admin, 1);
+  assert.equal('auth_user_id' in session.actor, false);
+  confirmed = false;
+  assert.deepEqual(await call('GET', 'session'), { actor: null });
+  await assert.rejects(call('GET', 'state'), { status: 401 });
 });

@@ -18,7 +18,6 @@ const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
 
 const api = createApi(db, {
-  setupToken: process.env.ADMIN_SETUP_TOKEN,
   secureCookies: process.env.SECURE_COOKIES === '1',
 });
 

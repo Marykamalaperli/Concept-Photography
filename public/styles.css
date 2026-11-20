@@ -334,4 +334,3 @@ table .tag{white-space:nowrap}
 @media(max-width:380px){.owner-fields{grid-template-columns:1fr}.schedule-row .row-tags{display:none}}
 .auth-connection{margin-top:16px;padding:10px 12px;border:1px solid #ead8bf;border-radius:8px;background:#fff7eb;color:#6d4c28;font-size:12px;line-height:1.5}
 .auth-connection .text-link{padding-bottom:0}
-.auth-help [data-auth-setup]{margin-bottom:7px;padding-top:0}
