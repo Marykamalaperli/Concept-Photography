@@ -36,7 +36,7 @@ Scheduled work creates an in-app reminder when its start enters the 30-minute wi
 
 Serve the Node app behind HTTPS with a persistent volume for SQLite. Set `HOST=0.0.0.0` if your hosting environment requires it, and set `SECURE_COOKIES=1` for HTTPS. Configure the proxy to preserve the public Host header. Before opening a new remote workspace to users, set a strong `ADMIN_SETUP_TOKEN` as a server secret. The first-run form requires that token away from localhost. Admin setup is one-time and the token can be removed after the account is created. The server needs outbound HTTPS access to Google Maps to expand short links.
 
-The GitHub Pages workflow publishes a public sign-in landing page. Set the GitHub Actions repository variable `WORKSPACE_URL` to the HTTPS address of the hosted Node app to add an **Open workspace sign-in** button. Credentials, financial records, and attendance stay on the Node server. Run `npm run build:pages` to generate the landing page in `dist/`.
+The GitHub Pages workflow publishes the sign-in entry page. Once the Node app has an HTTPS address, set **Settings → Secrets and variables → Actions → Variables → WORKSPACE_URL** to that address and rerun **Deploy GitHub Pages**. The **Open workspace sign-in** button then opens the hosted login directly. Without a default address, staff can paste their workspace URL. The Node app handles all passwords and shared records. Run `npm run build:pages` to generate the entry page in `dist/`.
 
 ## Verify
 

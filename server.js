@@ -20,6 +20,8 @@ const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/styles.css', ['public/styles.css', 'text/css']],
   ['/app.js', ['public/app.js', 'text/javascript']],
+  ['/access-view.js', ['public/access-view.js', 'text/javascript']],
+  ['/sign-in.webp', ['public/sign-in.webp', 'image/webp']],
   ['/attendance-policy.js', ['public/attendance-policy.js', 'text/javascript']],
   ['/studio.webp', ['public/studio.webp', 'image/webp']],
   ['/inter.woff2', ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'font/woff2']],
@@ -41,12 +43,15 @@ const server = createServer(async (req, res) => {
     }
     const icon = path.match(/^\/icons\/([a-z0-9-]+)\.svg$/);
     const asset = assets.get(path) || (icon && [`node_modules/lucide-static/icons/${icon[1]}.svg`, 'image/svg+xml']);
-    if (!asset || !['GET', 'HEAD'].includes(req.method)) throw new RequestError('Page not found.', 404);
+    if (!asset || !['GET', 'HEAD'].includes(req.method)) {
+      sendJson(res, 404, { error: 'Page not found.' });
+      return;
+    }
     const content = await readFile(resolve(root, asset[0]));
     res.writeHead(200, {
       'Content-Type': asset[1],
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'self'",
+      'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'",
     });
     res.end(req.method === 'HEAD' ? undefined : content);
   } catch (error) {

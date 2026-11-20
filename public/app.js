@@ -1,4 +1,5 @@
 import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
+import { accessView } from './access-view.js';
 
 const main = document.querySelector('main');
 const sidebar = document.querySelector('#sidebar');
@@ -172,29 +173,45 @@ function loginPage() {
   sidebar.innerHTML = '';
   topbar.innerHTML = '';
   const setup = session?.needsSetup;
-  main.innerHTML = `<div class="auth-layout">
-    <section class="auth-aside">
-      <a class="brand" href="#main"><span class="brand-mark">${icon('camera')}</span><span><strong>Concept</strong><small>Photography</small></span></a>
-      <div class="auth-aside-copy"><h2>Concept Photography</h2><p>Studio workspace</p></div>
-    </section>
-    <section class="auth-content">
-      <div class="auth-form">
-        <h1>${setup ? 'Set up your studio' : 'Sign in'}</h1>
-        <p>${setup ? 'Create the first admin account for Concept Photography.' : 'Use your company credentials to open the studio workspace.'}</p>
-        <form data-form="${setup ? 'bootstrap' : 'login'}">
-          <div class="form-grid">
-            ${setup ? '<label class="full">Admin name<input name="name" autocomplete="name" maxlength="100" required></label>' : ''}
-            <label class="full">Email address<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
-            <label class="full">Password<input name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" maxlength="128" ${setup ? 'minlength="12"' : ''} required></label>
-            ${setup && session.requiresSetupToken ? '<label class="full">Setup token<input name="setupToken" type="password" autocomplete="off" required></label>' : ''}
-          </div>
-          <p class="form-error" role="alert" hidden></p>
-          <button type="submit" class="btn primary">${setup ? 'Create admin account' : 'Sign in'}${icon('arrow-right')}</button>
-        </form>
+  const usesToken = setup && session.requiresSetupToken;
+  main.innerHTML = accessView({
+    title: setup ? 'Set up your studio' : 'Sign in',
+    description: setup ? 'Create the first admin account for Concept Photography.' : 'Use your company email and password.',
+    content: `<form class="sign-in-fields" method="post" data-form="${setup ? 'bootstrap' : 'login'}">
+      ${setup ? '<label>Admin name<input name="name" autocomplete="name" maxlength="100" placeholder="Full name" required></label>' : ''}
+      <label>Email address
+        <span class="auth-input">${icon('mail')}<input name="email" type="email" autocomplete="username" maxlength="254" placeholder="you@company.com" required></span>
+      </label>
+      <div class="auth-password">
+        <label for="sign-in-password">Password</label>
+        <span class="auth-input with-toggle">${icon('lock-keyhole')}
+          <input id="sign-in-password" name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}"
+            maxlength="128" placeholder="${setup ? 'Create a password' : 'Enter your password'}"
+            ${setup ? 'minlength="12" aria-describedby="password-hint"' : ''} required>
+          <button type="button" class="password-toggle" data-password-toggle aria-controls="sign-in-password"
+            aria-label="Show password" title="Show password">${icon('eye')}</button>
+        </span>
+        ${setup ? '<small id="password-hint">Use at least 12 characters.</small>' : ''}
       </div>
-    </section>
-  </div>`;
+      ${usesToken ? '<label>Setup token<input name="setupToken" type="password" autocomplete="off" required></label>' : ''}
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn primary auth-submit"><span>${setup ? 'Create admin account' : 'Sign in'}</span>${icon('arrow-right')}</button>
+    </form>
+    ${setup ? '' : '<p class="auth-help">Need access or a password reset? <strong>Contact your studio admin.</strong></p>'}`,
+  });
 }
+
+main.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-password-toggle]');
+  if (!button) return;
+  const field = document.getElementById(button.getAttribute('aria-controls'));
+  const visible = field.type === 'password';
+  field.type = visible ? 'text' : 'password';
+  const label = visible ? 'Hide password' : 'Show password';
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  button.innerHTML = icon(visible ? 'eye-off' : 'eye');
+});
 
 function priority(task) {
   return task.priority && !task.completed_at ? tag('Priority', 'peach') : '';
@@ -1053,7 +1070,13 @@ document.addEventListener('submit', (event) => {
   errorNote.hidden = true;
   const data = Object.fromEntries(new FormData(form));
   if (kind === 'tasks') data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
+  const authLabel = form.querySelector('.auth-submit span');
+  const originalLabel = authLabel?.textContent;
   mutate(event.submitter, async () => {
+    if (authLabel) {
+      form.setAttribute('aria-busy', 'true');
+      authLabel.textContent = kind === 'login' ? 'Signing in…' : 'Creating account…';
+    }
     try {
       await request(kind, data);
       if (kind === 'login' || kind === 'bootstrap') {
@@ -1067,6 +1090,11 @@ document.addEventListener('submit', (event) => {
     } catch (error) {
       errorNote.textContent = error.message;
       errorNote.hidden = false;
+    } finally {
+      if (authLabel) {
+        authLabel.textContent = originalLabel;
+        form.removeAttribute('aria-busy');
+      }
     }
   });
 });
@@ -1081,7 +1109,11 @@ window.addEventListener('hashchange', () => {
 });
 
 loadSession().catch(() => {
-  main.innerHTML = '<p class="empty">The workspace could not load. Refresh the page to try again.</p>';
+  main.innerHTML = accessView({
+    title: 'Workspace unavailable',
+    description: 'The workspace could not load. Check your connection and try again.',
+    content: '<a class="btn primary auth-submit" href="./">Try again</a>',
+  });
 });
 setInterval(tick, 1000);
 setInterval(() => {
