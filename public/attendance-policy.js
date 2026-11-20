@@ -10,10 +10,6 @@ export class AttendanceError extends Error {
   }
 }
 
-export function requireManager(employee) {
-  if (!employee?.is_admin) throw new AttendanceError('Switch to the studio manager to change scheduled locations.', 403);
-}
-
 function coordinatesAreValid({ latitude, longitude }) {
   return Number.isFinite(latitude) && Math.abs(latitude) <= 90 &&
     Number.isFinite(longitude) && Math.abs(longitude) <= 180;

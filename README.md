@@ -1,6 +1,6 @@
 # Concept Photography Studio Workspace
 
-An employee management MVP for scheduling studio work, tracking time on tasks, and recording attendance.
+An admin dashboard and employee portal for studio scheduling, location-verified attendance, work approvals, and finances.
 
 ## Run locally
 
@@ -11,29 +11,33 @@ npm ci
 npm start
 ```
 
-Open http://localhost:3000. The first launch creates a SQLite database in `data/` and loads sample employees, assignments, and attendance. The profile selector switches demo employees. Use `npm test` to verify reminder timing, timer and attendance workflows, and data persistence across a restart.
+Open http://localhost:3000 and create the first admin account. The workspace starts empty and stores its data in `data/workforce.sqlite`. Set `DATABASE_PATH` to use another SQLite file and `PORT` to use another local port. On upgrade, the original built-in sample accounts and their work are hidden. Existing employee records can be enrolled by setting a password in **Employees**.
 
-## Try the workflow
+## Admin workflow
 
-1. Switch to the studio manager profile and open **Dashboard → Time Clock → Office Location**. Set the office name and GPS coordinates. Use **Use my current location** if you are at the site. The built-in office and shoot coordinates are examples.
-2. Open **Team** to add employees. From **Schedule → New Task**, select **Photo shoot**, assign it to an employee, and enter the shoot’s coordinates. Use **Edit Shoot Location** on an existing shoot to update its site. The schedule uses India Standard Time.
-3. Switch to the assigned employee. On the shoot card, select **Clock In at Shoot**. Shoot check-in opens 30 minutes before the scheduled start and closes at the end of the estimated duration. The Time Clock also lists eligible shoots alongside the office. Employees can clock out of an active shift at its original site after the scheduled window ends.
-4. The browser requests a fresh location at check-in and check-out. Attendance requires a location reading that verifies the employee is within 100 metres of the selected site. Checking in at a shoot starts its task timer. Checking out stops it.
-5. Keep the workspace open and allow location access for automatic clock changes. A reliable reading beyond the boundary clocks the employee out. Returning to the same eligible site clocks them back in and resumes shoot time. **Cancel auto return** stops that behavior. Browser and device settings can suspend location updates, including when the screen locks or the browser closes.
-6. Assign yourself a task starting in the next 30 minutes to try **Notifications**. The server creates one in-app reminder per task when its start enters the 30-minute window. On a supported desktop browser, enable browser alerts on the Notifications page to receive new reminders for the selected employee while the app is open. The server needs to be running during the reminder window.
+1. Under **Dashboard → Company location**, paste the office’s Google Maps link and save the location. Share links that resolve to a GPS pin fill the coordinates automatically. If a link only contains a place name or its redirect is unavailable, drop a pin in Maps and share it or enter its latitude and longitude. The office geofence is 100 metres.
+2. Under **Employees**, add each person, set their company sign-in email and password, and share the credentials privately. Use **Edit employee** to update a profile or reset its password. A password reset or email change ends current sessions.
+3. Under **Schedule → Schedule shoot**, enter the shoot name, client name and mobile number, Maps link, date, time, duration, and expected income. You can use an existing client or create one during scheduling. Times are in India Standard Time.
+4. Assign work directly to an employee to put it in the priority section of their schedule. Choose **Open for employee requests** to let employees apply. Employees see basic opportunity information until an admin approves a request, which assigns the work and shares its details.
+5. Under **Finances**, record full or partial payments against shoots and add company expenses. Edit a payment or expense in its history to correct an entry. Shoot balances show expected income, receipts, and outstanding payments. Cash profit to date is receipts minus recorded expenses. Amounts are in INR.
+6. Use **Clients** to review owner contacts and client notes. Use **Schedule** and **Attendance** to review employees’ assignments, tracked work, and clock records.
 
-The Attendance Log shows the assigned site, the GPS readings at clock events, and automatic departures and returns. The location watcher sends a reading to the server only when the browser detects a possible clock event. Location access requires HTTPS or localhost.
+## Employee workflow
 
-## Demo scope
+Sign in with the credentials from the admin. **My Schedule** shows assigned work first, with a **Priority** badge. **Available Work** shows open opportunities and the status of any requests.
 
-The workspace runs on loopback by default. The employee selector is for demonstration. The manager profile can configure sites in the demo, and real employee use requires authentication and verified account permissions. Use sample data until employee sign-in and manager permissions are added. Reminder delivery is in-app and optionally via an open desktop browser.
+Clock in and out at the office or an assigned shoot with a fresh GPS reading. Shoot check-in opens 30 minutes before the start and ends after the scheduled duration. Clock-out remains available at the original site. Attendance requires a reading within 100 metres that meets the browser accuracy check. At a shoot, clocking in also starts the work timer and clocking out stops it.
 
-Set `SEED_DEMO=0` and `DATABASE_PATH` to a new SQLite file for a clean workspace. For example, `SEED_DEMO=0 DATABASE_PATH=data/clean.sqlite npm start`. Set `PORT` to use a different local port.
+Keep the workspace open and allow location access for automatic departures and returns. A reliable reading outside the geofence clocks you out. Returning to the same eligible site clocks you back in. **Cancel auto return** ends that waiting state. A locked screen, suspended tab, or closed browser can interrupt the updates. Location access requires HTTPS or localhost.
 
-## GitHub Pages demo
+Scheduled work creates an in-app reminder when its start enters the 30-minute window while the server is running. Supported desktop browsers can also show alerts while the app is open.
 
-In the GitHub repository, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. Then run **Deploy GitHub Pages** from the Actions tab, or push to `main`. Once the workflow deploys, the demo is available at https://marykamalaperli.github.io/Concept-Photography/.
+## Hosting
 
-The Pages build packages sample records and saves changes in the browser that made them. Employees, tasks, time entries, and GPS records are local to that browser. Reminder checks run while the demo is open. The Node.js and SQLite version can still be run locally using the instructions above.
+Serve the Node app behind HTTPS with a persistent volume for SQLite. Set `HOST=0.0.0.0` if your hosting environment requires it, and set `SECURE_COOKIES=1` for HTTPS. Configure the proxy to preserve the public Host header. Before opening a new remote workspace to users, set a strong `ADMIN_SETUP_TOKEN` as a server secret. The first-run form requires that token away from localhost. Admin setup is one-time and the token can be removed after the account is created. The server needs outbound HTTPS access to Google Maps to expand short links.
 
-Run `npm run build:pages` to generate the static site in `dist/`.
+The GitHub Pages workflow publishes a public sign-in landing page. Set the GitHub Actions repository variable `WORKSPACE_URL` to the HTTPS address of the hosted Node app to add an **Open workspace sign-in** button. Credentials, financial records, and attendance stay on the Node server. Run `npm run build:pages` to generate the landing page in `dist/`.
+
+## Verify
+
+Run `npm test` to check sign-in and role permissions, scheduling, approvals, GPS attendance, reminders, financial records, and persistence across a server restart.

@@ -24,6 +24,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build:pages
+        env:
+          WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
