@@ -29,3 +29,41 @@ export function accessView({ title, description, content }) {
     </section>
   </div>`;
 }
+
+export function loginView({ setup = false, requiresSetupToken = false } = {}) {
+  return accessView({
+    title: setup ? 'Set up your studio' : 'Sign in',
+    description: setup ? 'Create the first admin account for Concept Photography.' : 'Use your company email and password.',
+    content: `<form class="sign-in-fields" method="dialog" data-form="${setup ? 'bootstrap' : 'login'}">
+      ${setup ? '<label>Admin name<input name="name" autocomplete="name" maxlength="100" placeholder="Full name" required></label>' : ''}
+      <label>Email address
+        <span class="auth-input">${accessIcon('mail')}<input name="email" type="email" autocomplete="username" maxlength="254" placeholder="you@company.com" required></span>
+      </label>
+      <div class="auth-password">
+        <label for="sign-in-password">Password</label>
+        <span class="auth-input with-toggle">${accessIcon('lock-keyhole')}
+          <input id="sign-in-password" name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}"
+            maxlength="128" placeholder="${setup ? 'Create a password' : 'Enter your password'}"
+            ${setup ? 'minlength="12" aria-describedby="password-hint"' : ''} required>
+          <button type="button" class="password-toggle" data-password-toggle aria-controls="sign-in-password"
+            aria-label="Show password" title="Show password">${accessIcon('eye')}</button>
+        </span>
+        ${setup ? '<small id="password-hint">Use at least 12 characters.</small>' : ''}
+      </div>
+      ${setup && requiresSetupToken ? '<label>Setup token<input name="setupToken" type="password" autocomplete="off" required></label>' : ''}
+      <p class="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn primary auth-submit"><span>${setup ? 'Create admin account' : 'Sign in'}</span>${accessIcon('arrow-right')}</button>
+    </form>
+    <noscript><p class="auth-help">Enable JavaScript to sign in to the workspace.</p></noscript>
+    <div class="auth-connection" data-auth-connection hidden>
+      <p role="status"></p>
+      <button type="button" class="text-link" data-auth-retry>Retry connection</button>
+    </div>
+    ${setup
+      ? '<p class="auth-help"><button type="button" class="text-link" data-auth-back>Back to sign in</button></p>'
+      : `<div class="auth-help">
+          <button type="button" class="text-link" data-auth-setup hidden>Set up the first admin account</button>
+          <p>Need access or a password reset? <strong>Contact your studio admin.</strong></p>
+        </div>`}`,
+  });
+}

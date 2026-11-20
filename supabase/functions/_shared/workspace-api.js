@@ -511,7 +511,12 @@ export function createApi(db, { bearer = false, secureCookies = false, setupToke
     const actor = await authenticatedEmployee(db, req, now, bearer);
     if (req.method === 'GET' && path === '/api/session') {
       const setup = await needsSetup();
-      return { actor, needsSetup: setup, requiresSetupToken: setup && (bearer || Boolean(setupToken) || !localSetup(req)) };
+      return {
+        actor,
+        needsSetup: setup,
+        setupAvailable: setup && (Boolean(setupToken) || (!bearer && localSetup(req))),
+        requiresSetupToken: setup && (bearer || Boolean(setupToken) || !localSetup(req)),
+      };
     }
     if (req.method === 'GET' && path === '/api/state') {
       if (!actor) throw new RequestError('Sign in to open the workspace.', 401);

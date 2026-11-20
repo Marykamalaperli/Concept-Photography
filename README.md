@@ -11,7 +11,7 @@ npm ci
 npm start
 ```
 
-Open http://localhost:3000 and create the first admin account. The workspace starts empty and stores its data in `data/workforce.sqlite`. Set `DATABASE_PATH` to use another SQLite file and `PORT` to use another local port. On upgrade, the original built-in sample accounts and their work are hidden. Existing employee records can be enrolled by setting a password in **Employees**.
+Open http://localhost:3000 and choose **Set up the first admin account** on the sign-in screen. The workspace starts empty and stores its data in `data/workforce.sqlite`. Set `DATABASE_PATH` to use another SQLite file and `PORT` to use another local port. On upgrade, the original built-in sample accounts and their work are hidden. Existing employee records can be enrolled by setting a password in **Employees**.
 
 ## Admin workflow
 
@@ -45,7 +45,7 @@ The Pages build points to the project in [supabase/project.json](supabase/projec
    | `SUPABASE_ADMIN_SETUP_TOKEN` | A randomly generated URL-safe value of at least 24 characters for one-time admin setup. You can also set `ADMIN_SETUP_TOKEN` directly in Supabase Edge Function secrets. |
 
 2. Run **Actions → Deploy Supabase backend → Run workflow** on `main`. It applies the database migration, sets the allowed website origin, deploys the function, and checks the session endpoint.
-3. Open the [GitHub Pages site](https://marykamalaperli.github.io/Concept-Photography/) and create the first admin account using the setup token. A new Supabase database starts empty. Create employee accounts after setting up the admin.
+3. Open the [GitHub Pages site](https://marykamalaperli.github.io/Concept-Photography/) and choose **Set up the first admin account** to create the account using the setup token. Use the resulting email and password to sign in to the admin dashboard. A new Supabase database starts empty. Create employee accounts after setting up the admin.
 
 The live Pages build uses `USE_SUPABASE=1`. Run `USE_SUPABASE=1 npm run build:pages` to reproduce it in `dist/`. A configured `WORKSPACE_URL` repository variable overrides Supabase and retains the standalone Node sign-in link. Remove the override and rerun **Deploy GitHub Pages** to use Supabase instead.
 

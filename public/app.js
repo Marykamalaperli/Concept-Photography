@@ -1,5 +1,5 @@
 import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
-import { accessView } from './access-view.js';
+import { loginView } from './access-view.js';
 
 const apiOrigin = document.querySelector('meta[name="concept-api"]')?.content;
 const sessionKey = apiOrigin && `concept-photography-session:${apiOrigin}`;
@@ -44,6 +44,7 @@ const categories = {
 const initialState = () => ({ office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
 let state = initialState();
 let session = null;
+let sessionVersion = 0;
 let snapshot;
 let actorId;
 let page = 'dashboard';
@@ -171,41 +172,45 @@ function renderChrome() {
     </div>`;
 }
 
-function loginPage() {
+function showAuthStatus(message = '', retry = true) {
+  const notice = main.querySelector('[data-auth-connection]');
+  if (!notice) return;
+  notice.hidden = !message;
+  notice.querySelector('[role="status"]').textContent = message;
+  notice.querySelector('[data-auth-retry]').hidden = !retry;
+}
+
+function updateAdminSetup() {
+  const button = main.querySelector('[data-auth-setup]');
+  const ready = session?.needsSetup && session.setupAvailable !== false;
+  if (button) button.hidden = !ready;
+  if (session?.needsSetup && !ready) {
+    showAuthStatus('The studio admin needs to configure a setup token before creating the first account.', false);
+  }
+}
+
+function loginPage(setup = false) {
   stopTracking();
   document.body.classList.add('signed-out');
   sidebar.innerHTML = '';
   topbar.innerHTML = '';
-  const setup = session?.needsSetup;
-  const usesToken = setup && session.requiresSetupToken;
-  main.innerHTML = accessView({
-    title: setup ? 'Set up your studio' : 'Sign in',
-    description: setup ? 'Create the first admin account for Concept Photography.' : 'Use your company email and password.',
-    content: `<form class="sign-in-fields" method="post" data-form="${setup ? 'bootstrap' : 'login'}">
-      ${setup ? '<label>Admin name<input name="name" autocomplete="name" maxlength="100" placeholder="Full name" required></label>' : ''}
-      <label>Email address
-        <span class="auth-input">${icon('mail')}<input name="email" type="email" autocomplete="username" maxlength="254" placeholder="you@company.com" required></span>
-      </label>
-      <div class="auth-password">
-        <label for="sign-in-password">Password</label>
-        <span class="auth-input with-toggle">${icon('lock-keyhole')}
-          <input id="sign-in-password" name="password" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}"
-            maxlength="128" placeholder="${setup ? 'Create a password' : 'Enter your password'}"
-            ${setup ? 'minlength="12" aria-describedby="password-hint"' : ''} required>
-          <button type="button" class="password-toggle" data-password-toggle aria-controls="sign-in-password"
-            aria-label="Show password" title="Show password">${icon('eye')}</button>
-        </span>
-        ${setup ? '<small id="password-hint">Use at least 12 characters.</small>' : ''}
-      </div>
-      ${usesToken ? '<label>Setup token<input name="setupToken" type="password" autocomplete="off" required></label>' : ''}
-      <p class="form-error" role="alert" hidden></p>
-      <button type="submit" class="btn primary auth-submit"><span>${setup ? 'Create admin account' : 'Sign in'}</span>${icon('arrow-right')}</button>
-    </form>
-    ${setup ? '' : '<p class="auth-help">Need access or a password reset? <strong>Contact your studio admin.</strong></p>'}`,
-  });
+  main.innerHTML = loginView({ setup, requiresSetupToken: session?.requiresSetupToken });
+  updateAdminSetup();
 }
 
 main.addEventListener('click', (event) => {
+  if (event.target.closest('[data-auth-retry]')) {
+    if (!pending) loadSession();
+    return;
+  }
+  if (event.target.closest('[data-auth-setup], [data-auth-back]')) {
+    if (pending) return;
+    const setup = !!event.target.closest('[data-auth-setup]');
+    if (setup && (!session?.needsSetup || session.setupAvailable === false)) return;
+    loginPage(setup);
+    main.querySelector('input')?.focus();
+    return;
+  }
   const button = event.target.closest('[data-password-toggle]');
   if (!button) return;
   const field = document.getElementById(button.getAttribute('aria-controls'));
@@ -596,18 +601,25 @@ async function request(path, body) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  const response = await fetch(`${apiOrigin || ''}/api/${path}`, {
-    headers,
-    ...(apiOrigin ? { credentials: 'omit' } : {}),
-    ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
-  });
-  const payload = await response.json();
+  let response;
+  let payload;
+  try {
+    response = await fetch(`${apiOrigin || ''}/api/${path}`, {
+      headers,
+      ...(path === 'session' ? { signal: AbortSignal.timeout(12000) } : {}),
+      ...(apiOrigin ? { credentials: 'omit' } : {}),
+      ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
+    });
+    payload = await response.json();
+  } catch {
+    throw new Error('The studio workspace could not be reached. Try again.');
+  }
   if (!response.ok) {
     if (response.status === 401 && path !== 'login') {
       storeSessionToken(null);
       if (session?.actor) clearWorkspace({ actor: null, needsSetup: false });
     }
-    throw new Error(payload.error || 'The workspace could not complete the request.');
+    throw new Error(payload?.error || 'The workspace could not complete the request. Try again.');
   }
   if (path === 'login' || path === 'bootstrap') storeSessionToken(payload.token);
   if (path === 'logout') storeSessionToken(null);
@@ -638,6 +650,7 @@ function notifyReminders(items) {
 }
 
 function clearWorkspace(info) {
+  sessionVersion++;
   refreshVersion++;
   loading = false;
   snapshot = undefined;
@@ -678,14 +691,26 @@ async function refresh({ force = false } = {}) {
 }
 
 async function loadSession() {
-  session = await request('session');
-  if (!session.actor) storeSessionToken(null);
-  if (session.actor) {
-    await refresh({ force: true });
-  } else {
-    clearWorkspace(session);
+  const version = ++sessionVersion;
+  try {
+    const info = await request('session');
+    if (version !== sessionVersion) return;
+    session = info;
+    showAuthStatus();
+    if (info.actor) {
+      await refresh({ force: true });
+      return;
+    }
+    storeSessionToken(null);
+    if (actor()) clearWorkspace(info);
+    else updateAdminSetup();
+  } catch {
+    if (version === sessionVersion) {
+      showAuthStatus('The studio could not connect to its workspace. Retry the connection or ask your studio admin to check the deployment.');
+    }
   }
 }
+
 function openDialog(title, subtitle, body) {
   delete dialog.dataset.taskId;
   dialog.innerHTML = `<div class="dialog-inner"><div class="panel-head">
@@ -1094,12 +1119,14 @@ document.addEventListener('submit', (event) => {
   const originalLabel = authLabel?.textContent;
   mutate(event.submitter, async () => {
     if (authLabel) {
+      sessionVersion++;
       form.setAttribute('aria-busy', 'true');
       authLabel.textContent = kind === 'login' ? 'Signing in…' : 'Creating account…';
     }
     try {
       await request(kind, data);
       if (kind === 'login' || kind === 'bootstrap') {
+        history.replaceState(null, '', '#dashboard');
         await loadSession();
         return;
       }
@@ -1128,15 +1155,7 @@ window.addEventListener('hashchange', () => {
   window.scrollTo(0, 0);
 });
 
-loadSession().catch(() => {
-  main.innerHTML = accessView({
-    title: 'Workspace unavailable',
-    description: apiOrigin
-      ? 'The studio could not connect to its Supabase workspace. Try again or ask your admin to check the deployment.'
-      : 'The workspace could not load. Check your connection and try again.',
-    content: '<a class="btn primary auth-submit" href="./">Try again</a>',
-  });
-});
+loadSession();
 setInterval(tick, 1000);
 setInterval(() => {
   if (!pending && session?.actor) refresh().catch(() => {});

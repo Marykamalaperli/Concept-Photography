@@ -99,9 +99,14 @@ test('admin setup, assignment access, approvals, ledger, and GPS survive a resta
   }
 
   await startServer();
+  const document = await (await fetch(base)).text();
+  assert.match(document, /<h1 id="access-title">Sign in<\/h1>/);
+  assert.match(document, /name="email" type="email"/);
+  assert.match(document, /name="password" type="password"/);
+  assert.doesNotMatch(document, /Admin Dashboard/);
   const guest = client();
   await guest('state', null, 401);
-  assert.equal((await guest('session')).needsSetup, true);
+  assert.equal((await guest('session')).setupAvailable, true);
   const admin = client();
   const adminCredentials = { name: 'Studio Admin', email: 'admin@example.com', password: 'Admin example passphrase' };
   await admin('bootstrap', adminCredentials);

@@ -2,6 +2,10 @@ name: Deploy Supabase backend
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/supabase.yml
 
 permissions:
   contents: read
@@ -15,6 +19,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check Supabase deployment access
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [[ -n "$SUPABASE_ACCESS_TOKEN" && -n "$SUPABASE_DB_PASSWORD" ]]; then
+            exit 0
+          fi
+          project_url=$(jq -er .url supabase/project.json)
+          site_origin=$(jq -er .siteOrigin supabase/project.json)
+          status=$(curl --silent --show-error --max-time 10 --output /dev/null --write-out '%{http_code}' \
+            -H "Origin: $site_origin" "$project_url/functions/v1/concept-api/api/session") || status=000
+          echo "Hosted session endpoint returned HTTP $status."
+          [[ -n "$SUPABASE_ACCESS_TOKEN" ]] || echo "::error::Set the SUPABASE_ACCESS_TOKEN repository secret."
+          [[ -n "$SUPABASE_DB_PASSWORD" ]] || echo "::error::Set the SUPABASE_DB_PASSWORD repository secret."
+          exit 1
       - uses: supabase/setup-cli@v1
         with:
           version: 2.83.0
@@ -25,8 +46,6 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           ADMIN_SETUP_TOKEN: ${{ secrets.SUPABASE_ADMIN_SETUP_TOKEN }}
         run: |
-          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::Set the SUPABASE_ACCESS_TOKEN repository secret."; exit 1; }
-          test -n "$SUPABASE_DB_PASSWORD" || { echo "::error::Set the SUPABASE_DB_PASSWORD repository secret."; exit 1; }
           [[ -z $ADMIN_SETUP_TOKEN || $ADMIN_SETUP_TOKEN =~ ^[A-Za-z0-9_-]{24,}$ ]] || { echo "::error::Use a randomly generated URL-safe admin setup token of at least 24 characters."; exit 1; }
           project_url=$(jq -er .url supabase/project.json)
           project_ref=${project_url#https://}
@@ -44,6 +63,10 @@ jobs:
           fi
           supabase secrets set --project-ref "$project_ref" --env-file "$vars_file"
           supabase functions deploy concept-api --project-ref "$project_ref" --use-api --no-verify-jwt
-          curl --retry 5 --retry-all-errors --fail --silent --show-error --max-time 15 \
-            -H "Origin: $site_origin" "$project_url/functions/v1/concept-api/api/session" |
-            jq -e 'has("actor") and has("needsSetup")' >/dev/null
+          session=$(curl --retry 5 --retry-all-errors --fail --silent --show-error --max-time 15 \
+            -H "Origin: $site_origin" "$project_url/functions/v1/concept-api/api/session")
+          jq -e 'has("actor") and has("needsSetup") and has("setupAvailable")' <<<"$session" >/dev/null
+          if jq -e '.needsSetup and (.setupAvailable | not)' <<<"$session" >/dev/null; then
+            echo "::error::Configure the Supabase Edge Function secret ADMIN_SETUP_TOKEN before creating the first admin."
+            exit 1
+          fi

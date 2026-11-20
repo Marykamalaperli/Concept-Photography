@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { accessView, workspaceAddress } from '../public/access-view.js';
+import { accessView, loginView, workspaceAddress } from '../public/access-view.js';
 
 const output = new URL('../dist/', import.meta.url);
 const publicFiles = new URL('../public/', import.meta.url);
@@ -49,7 +49,7 @@ async function pagesApp() {
     cp(new URL('../supabase/functions/_shared/attendance-policy.js', import.meta.url), new URL('attendance-policy.js', output)),
     cp(new URL('lucide-static/icons/', packages), new URL('icons/', output), { recursive: true }),
   ]);
-  return entry.replace('</head>', `${meta}\n</head>`);
+  return entry.replace('</head>', `${meta}\n</head>`).replace('<!-- SIGN_IN -->', () => loginView());
 }
 
 async function pagesLauncher(workspace) {

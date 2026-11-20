@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loginView } from './public/access-view.js';
 import { openStore } from './store.js';
 import { sqliteAdapter } from './sqlite-adapter.js';
 import { createApi } from './supabase/functions/_shared/workspace-api.js';
@@ -52,7 +53,8 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: 'Page not found.' });
       return;
     }
-    const content = await readFile(resolve(root, asset[0]));
+    const source = await readFile(resolve(root, asset[0]));
+    const content = path === '/' ? source.toString('utf8').replace('<!-- SIGN_IN -->', () => loginView()) : source;
     res.writeHead(200, {
       'Content-Type': asset[1],
       'X-Content-Type-Options': 'nosniff',
