@@ -1,8 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { authenticatedEmployee, createSession, endSession, hashPassword, passwordMatches } from './accounts.js';
 import { mapsLocation } from './maps.js';
-import { attendanceTransition, shootSite } from './public/attendance-policy.js';
-import { refreshReminders } from './store.js';
+import { attendanceTransition, shootSite } from './attendance-policy.js';
+import { refreshReminders } from './reminders.js';
 
 const publicEmployee = 'id, name, email, role, phone, color, is_admin, password_hash IS NOT NULL AS has_login';
 const categories = ['Photo shoot', 'Editing', 'Planning', 'Studio', 'Other'];
@@ -68,7 +68,7 @@ function adminOnly(actor) {
   if (!actor.is_admin) throw new RequestError('This action is available to the admin only.', 403);
 }
 
-async function readBody(req) {
+async function readBody(req, siteOrigin) {
   if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
     throw new RequestError('Use application/json.', 415);
   }
@@ -79,7 +79,8 @@ async function readBody(req) {
     } catch {
       throw new RequestError('Origin is unavailable.', 403);
     }
-    if (origin.host !== req.headers.host || !['http:', 'https:'].includes(origin.protocol)) {
+    const sameOrigin = origin.host === req.headers.host && ['http:', 'https:'].includes(origin.protocol);
+    if (siteOrigin ? origin.origin !== siteOrigin : !sameOrigin) {
       throw new RequestError('Submit this request from the workspace.', 403);
     }
   }
@@ -105,9 +106,8 @@ function localSetup(req) {
     !req.headers.forwarded && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-host'];
 }
 
-function setupAllowed(req, supplied) {
-  const configured = process.env.ADMIN_SETUP_TOKEN;
-  if (!configured) return localSetup(req);
+function setupAllowed(req, supplied, configured, bearer) {
+  if (!configured) return !bearer && localSetup(req);
   if (typeof supplied !== 'string') return false;
   const checksum = (value) => createHash('sha256').update(value).digest();
   return timingSafeEqual(checksum(configured), checksum(supplied));
@@ -121,12 +121,25 @@ async function siteFrom(body) {
   }
 }
 
-export function createApi(db) {
+export function createApi(db, { bearer = false, secureCookies = false, setupToken, siteOrigin } = {}) {
   const loginAttempts = new Map();
-  const secureCookies = process.env.SECURE_COOKIES === '1';
+  const sessionOptions = { bearer, secureCookies };
 
-  function throttle(req, now) {
+  async function throttle(req, now) {
     const key = req.socket.remoteAddress;
+    if (bearer) {
+      const hash = createHash('sha256').update(key).digest('hex');
+      const window = 5 * 60_000;
+      const limit = await db.get(`
+        INSERT INTO login_limits (key, count, reset_at) VALUES (?, 1, ?)
+        ON CONFLICT (key) DO UPDATE SET
+          count = CASE WHEN login_limits.reset_at <= ? THEN 1 ELSE LEAST(login_limits.count + 1, 13) END,
+          reset_at = CASE WHEN login_limits.reset_at <= ? THEN excluded.reset_at ELSE login_limits.reset_at END
+        RETURNING count
+      `, hash, now + window, now, now);
+      if (limit.count > 12) throw new RequestError('Too many sign-in attempts. Try again in a few minutes.', 429);
+      return;
+    }
     if (loginAttempts.size >= 1024) {
       for (const [address, attempt] of loginAttempts) {
         if (attempt.resetAt <= now) loginAttempts.delete(address);
@@ -142,48 +155,43 @@ export function createApi(db) {
     attempt.count += 1;
   }
 
-  const needsSetup = () => !db.prepare('SELECT 1 FROM employees WHERE is_admin = 1 AND archived = 0 AND password_hash IS NOT NULL').get();
-
-  function transaction(callback) {
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = callback();
-      db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
+  async function needsSetup(store = db) {
+    return !await store.get('SELECT 1 FROM employees WHERE is_admin = 1 AND archived = 0 AND password_hash IS NOT NULL');
   }
 
-  function getEmployee(id) {
-    const employee = db.prepare(`SELECT ${publicEmployee} FROM employees WHERE id = ? AND archived = 0`).get(Number(id));
+  function idValue(value) {
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
+  }
+
+  async function getEmployee(id, store = db) {
+    const employee = await store.get(`SELECT ${publicEmployee} FROM employees WHERE id = ? AND archived = 0`, idValue(id));
     if (!employee) throw new RequestError('Employee not found.', 404);
     return employee;
   }
 
-  function getTask(id) {
-    const task = db.prepare('SELECT tasks.* FROM tasks JOIN employees ON employees.id = tasks.employee_id WHERE tasks.id = ? AND employees.archived = 0').get(Number(id));
+  async function getTask(id, store = db) {
+    const task = await store.get('SELECT tasks.* FROM tasks JOIN employees ON employees.id = tasks.employee_id WHERE tasks.id = ? AND employees.archived = 0', idValue(id));
     if (!task) throw new RequestError('Shoot or task not found.', 404);
     return task;
   }
 
-  function ownTask(id, actor) {
-    const task = getTask(id);
+  async function ownTask(id, actor, store = db) {
+    const task = await getTask(id, store);
     if (task.is_open || task.employee_id !== actor.id) throw new RequestError('This work has not been assigned to your account.', 403);
     return task;
   }
 
-  function officeSite() {
-    return db.prepare('SELECT name, latitude, longitude, maps_url FROM office WHERE id = 1').get() ?? null;
+  async function officeSite(store = db) {
+    return (await store.get('SELECT name, latitude, longitude, maps_url FROM office WHERE id = 1')) ?? null;
   }
 
-  function overview(actor, now) {
-    refreshReminders(db, now);
+  async function overview(actor, now) {
+    await db.transaction((store) => refreshReminders(store, now));
     const manager = actor.is_admin;
     const employees = manager
-      ? db.prepare(`SELECT ${publicEmployee} FROM employees WHERE archived = 0 ORDER BY name`).all()
-      : [getEmployee(actor.id)];
+      ? await db.all(`SELECT ${publicEmployee} FROM employees WHERE archived = 0 ORDER BY name`)
+      : [await getEmployee(actor.id)];
     const taskQuery = `
       SELECT tasks.id, title, employee_id, start_at, estimate, location, category, completed_at,
         site_latitude, site_longitude, maps_url, priority, is_open, clients.name AS client_name, clients.phone AS client_phone
@@ -192,141 +200,142 @@ export function createApi(db) {
       WHERE employees.archived = 0 ${manager ? '' : 'AND tasks.employee_id = ? AND tasks.is_open = 0'}
       ORDER BY completed_at IS NOT NULL, priority DESC, start_at, tasks.id
     `;
-    const visibleTasks = db.prepare(taskQuery).all(...(manager ? [] : [actor.id]));
-    const attendance = db.prepare(`
+    const visibleTasks = await db.all(taskQuery, ...(manager ? [] : [actor.id]));
+    const attendance = await db.all(`
       SELECT attendance.* FROM attendance JOIN employees ON employees.id = attendance.employee_id
       WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
       ORDER BY clock_in DESC, attendance.id DESC
-    `).all(...(manager ? [] : [actor.id]));
-    const sessions = db.prepare(`
+    `, ...(manager ? [] : [actor.id]));
+    const sessions = await db.all(`
       SELECT task_sessions.* FROM task_sessions JOIN employees ON employees.id = task_sessions.employee_id
       WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
       ORDER BY start_at DESC
-    `).all(...(manager ? [] : [actor.id]));
-    const requests = db.prepare(`
+    `, ...(manager ? [] : [actor.id]));
+    const requests = await db.all(`
       SELECT work_requests.*, tasks.title FROM work_requests
       JOIN tasks ON tasks.id = work_requests.task_id
       JOIN employees ON employees.id = work_requests.employee_id
       WHERE employees.archived = 0 ${manager ? '' : 'AND work_requests.employee_id = ?'}
       ORDER BY status != 'pending', requested_at DESC
-    `).all(...(manager ? [] : [actor.id]));
-    const openWork = manager ? [] : db.prepare(`
+    `, ...(manager ? [] : [actor.id]));
+    const openWork = manager ? [] : await db.all(`
       SELECT id, title, start_at, estimate, category FROM tasks
       WHERE is_open = 1 AND completed_at IS NULL AND start_at + estimate * 60000 > ?
       ORDER BY start_at
-    `).all(now);
+    `, now);
     return {
-      actor, office: officeSite(), employees, tasks: visibleTasks, attendance, sessions, requests, openWork,
-      reminders: db.prepare(`
+      actor, office: await officeSite(), employees, tasks: visibleTasks, attendance, sessions, requests, openWork,
+      reminders: await db.all(`
         SELECT reminders.*, tasks.title, tasks.start_at FROM reminders JOIN tasks ON tasks.id = reminders.task_id
         WHERE reminders.employee_id = ? AND tasks.employee_id = ? AND tasks.is_open = 0 ORDER BY sent_at DESC
-      `).all(actor.id, actor.id),
+      `, actor.id, actor.id),
       ...(manager ? {
-        clients: db.prepare('SELECT * FROM clients ORDER BY name').all(),
-        payments: db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, id DESC').all(),
-        expenses: db.prepare('SELECT * FROM expenses ORDER BY spent_on DESC, id DESC').all(),
+        clients: await db.all('SELECT * FROM clients ORDER BY name'),
+        payments: await db.all('SELECT * FROM payments ORDER BY paid_on DESC, id DESC'),
+        expenses: await db.all('SELECT * FROM expenses ORDER BY spent_on DESC, id DESC'),
       } : {}),
     };
   }
 
   async function bootstrap(req, res, body, now) {
-    if (!needsSetup()) throw new RequestError('The admin account is already set up.', 409);
-    throttle(req, now);
-    if (!setupAllowed(req, body.setupToken)) {
+    if (!await needsSetup()) throw new RequestError('The admin account is already set up.', 409);
+    await throttle(req, now);
+    if (!setupAllowed(req, body.setupToken, setupToken, bearer)) {
       throw new RequestError('Set up the admin from localhost or enter the server’s setup token.', 403);
     }
     const name = text(body.name, 'admin name');
     const address = email(body.email);
     const hash = await hashPassword(password(body.password));
-    const id = transaction(() => {
-      if (!needsSetup()) throw new RequestError('The admin account is already set up.', 409);
-      const existing = db.prepare('SELECT id, archived FROM employees WHERE email = ?').get(address);
+    const id = await db.transaction(async (store) => {
+      if (!await needsSetup(store)) throw new RequestError('The admin account is already set up.', 409);
+      const existing = await store.get('SELECT id, archived FROM employees WHERE email = ?', address);
       if (existing?.archived) throw new RequestError('Use your company email for the admin account.');
       if (existing) {
-        db.prepare("UPDATE employees SET name = ?, role = 'Administrator', is_admin = 1, password_hash = ? WHERE id = ?")
-          .run(name, hash, existing.id);
+        await store.run("UPDATE employees SET name = ?, role = 'Administrator', is_admin = 1, password_hash = ? WHERE id = ?", name, hash, existing.id);
         return existing.id;
       }
-      return db.prepare(`
+      return (await store.get(`
         INSERT INTO employees (name, email, role, color, is_admin, password_hash)
         VALUES (?, ?, 'Administrator', 'peach', 1, ?) RETURNING id
-      `).get(name, address, hash).id;
+      `, name, address, hash)).id;
     });
     loginAttempts.delete(req.socket.remoteAddress);
-    res.setHeader('Set-Cookie', createSession(db, id, now, secureCookies));
-    return { ok: true };
+    return createSession(db, id, now, res, sessionOptions);
   }
 
   async function signIn(req, res, body, now) {
-    throttle(req, now);
+    await throttle(req, now);
     const address = email(body.email);
     if (typeof body.password !== 'string' || body.password.length > 128) throw new RequestError('Invalid email or password.', 401);
-    const person = db.prepare('SELECT id, password_hash FROM employees WHERE email = ? AND archived = 0').get(address);
+    const person = await db.get('SELECT id, password_hash FROM employees WHERE email = ? AND archived = 0', address);
     if (!await passwordMatches(body.password, person?.password_hash)) throw new RequestError('Invalid email or password.', 401);
     // Recheck in case an admin reset the credential while verification was running.
-    if (db.prepare('SELECT password_hash FROM employees WHERE id = ? AND archived = 0').get(person.id)?.password_hash !== person.password_hash) {
-      throw new RequestError('Invalid email or password.', 401);
-    }
-    loginAttempts.delete(req.socket.remoteAddress);
-    res.setHeader('Set-Cookie', createSession(db, person.id, now, secureCookies));
-    return { ok: true };
+    return db.transaction(async (store) => {
+      if ((await store.get('SELECT password_hash FROM employees WHERE id = ? AND archived = 0', person.id))?.password_hash !== person.password_hash) {
+        throw new RequestError('Invalid email or password.', 401);
+      }
+      loginAttempts.delete(req.socket.remoteAddress);
+      return createSession(store, person.id, now, res, sessionOptions);
+    });
   }
 
   async function saveEmployee(body) {
-    const existing = body.id ? getEmployee(body.id) : null;
+    const existing = body.id ? await getEmployee(body.id) : null;
     if (existing?.is_admin) throw new RequestError('The admin account is managed separately.');
     const name = text(body.name, 'name');
     const role = text(body.role, 'job role');
     const address = email(body.email);
     const mobile = body.phone ? phone(body.phone) : null;
     const hash = body.password || !existing?.has_login ? await hashPassword(password(body.password)) : null;
-    return transaction(() => {
-      const duplicate = db.prepare('SELECT id FROM employees WHERE email = ?').get(address);
+    return db.transaction(async (store) => {
+      const duplicate = await store.get('SELECT id FROM employees WHERE email = ?', address);
       if (duplicate && duplicate.id !== existing?.id) throw new RequestError('That email is already in use.', 409);
       if (existing) {
-        const updated = db.prepare(`
+        const updated = await store.get(`
           UPDATE employees SET name = ?, role = ?, email = ?, phone = ?, password_hash = COALESCE(?, password_hash)
           WHERE id = ? RETURNING ${publicEmployee}
-        `).get(name, role, address, mobile, hash, existing.id);
-        if (hash || address !== existing.email) db.prepare('DELETE FROM auth_sessions WHERE employee_id = ?').run(existing.id);
+        `, name, role, address, mobile, hash, existing.id);
+        if (hash || address !== existing.email) await store.run('DELETE FROM auth_sessions WHERE employee_id = ?', existing.id);
         return updated;
       }
-      const count = db.prepare('SELECT COUNT(*) AS total FROM employees WHERE archived = 0').get().total;
-      return db.prepare(`
+      const { total: count } = await store.get('SELECT COUNT(*) AS total FROM employees WHERE archived = 0');
+      return await store.get(`
         INSERT INTO employees (name, role, email, phone, color, password_hash) VALUES (?, ?, ?, ?, ?, ?)
         RETURNING ${publicEmployee}
-      `).get(name, role, address, mobile, colors[count % colors.length], hash);
+      `, name, role, address, mobile, colors[count % colors.length], hash);
     });
   }
 
-  function saveClient(body) {
+  async function saveClient(body) {
     const name = text(body.name, 'client name');
     const mobile = phone(body.phone);
     const address = optional(body.email, 'email', 254) ? email(body.email) : null;
     const notes = optional(body.notes, 'client notes', 1000);
-    const existing = db.prepare('SELECT id FROM clients WHERE phone = ?').get(mobile);
-    if (existing && existing.id !== Number(body.id)) throw new RequestError('A client already uses that mobile number.', 409);
-    const client = body.id
-      ? db.prepare('UPDATE clients SET name = ?, phone = ?, email = ?, notes = ? WHERE id = ? RETURNING *').get(name, mobile, address, notes, Number(body.id))
-      : db.prepare('INSERT INTO clients (name, phone, email, notes) VALUES (?, ?, ?, ?) RETURNING *').get(name, mobile, address, notes);
-    if (!client) throw new RequestError('Client not found.', 404);
-    return client;
+    return db.transaction(async (store) => {
+      const existing = await store.get('SELECT id FROM clients WHERE phone = ?', mobile);
+      if (existing && existing.id !== idValue(body.id)) throw new RequestError('A client already uses that mobile number.', 409);
+      const client = body.id
+        ? await store.get('UPDATE clients SET name = ?, phone = ?, email = ?, notes = ? WHERE id = ? RETURNING *', name, mobile, address, notes, idValue(body.id))
+        : await store.get('INSERT INTO clients (name, phone, email, notes) VALUES (?, ?, ?, ?) RETURNING *', name, mobile, address, notes);
+      if (!client) throw new RequestError('Client not found.', 404);
+      return client;
+    });
   }
 
-  function clientForTask(body) {
+  async function clientForTask(body, store) {
     if (body.clientId) {
-      const existing = db.prepare('SELECT id FROM clients WHERE id = ?').get(Number(body.clientId));
+      const existing = await store.get('SELECT id FROM clients WHERE id = ?', idValue(body.clientId));
       if (!existing) throw new RequestError('Choose a valid client.');
       return existing.id;
     }
     const name = text(body.clientName, 'shoot owner name');
     const mobile = phone(body.clientPhone);
-    const existing = db.prepare('SELECT id, name FROM clients WHERE phone = ?').get(mobile);
+    const existing = await store.get('SELECT id, name FROM clients WHERE phone = ?', mobile);
     if (existing) {
       if (existing.name.toLowerCase() !== name.toLowerCase()) throw new RequestError('This number belongs to an existing client. Select that client or update their details.');
       return existing.id;
     }
-    return db.prepare('INSERT INTO clients (name, phone) VALUES (?, ?) RETURNING id').get(name, mobile).id;
+    return (await store.get('INSERT INTO clients (name, phone) VALUES (?, ?) RETURNING id', name, mobile)).id;
   }
 
   async function saveTask(body, actor, now) {
@@ -342,78 +351,78 @@ export function createApi(db) {
     if (!Number.isFinite(startAt)) throw new RequestError('Choose a valid start date and time.');
     const isShoot = category === 'Photo shoot';
     const isOpen = body.assignment === 'open';
-    const employee = isOpen ? actor : getEmployee(body.employeeId);
+    const employee = isOpen ? actor : await getEmployee(body.employeeId);
     if (!isOpen && !employee.has_login && !employee.is_admin) throw new RequestError('Set up this employee’s login before assigning work.');
     const site = isShoot ? await siteFrom(body) : null;
     const income = isShoot ? paise(body.income, true) : 0;
-    return transaction(() => {
-      const current = body.id ? getTask(body.id) : null;
+    return db.transaction(async (store) => {
+      const current = body.id ? await getTask(body.id, store) : null;
       if (current) {
         if (current.completed_at) throw new RequestError('Completed work cannot be rescheduled.', 409);
         if (current.category !== category) throw new RequestError('Keep the original work category when editing.');
-        const hasTime = db.prepare('SELECT 1 FROM task_sessions WHERE task_id = ?').get(current.id);
+        const hasTime = await store.get('SELECT 1 FROM task_sessions WHERE task_id = ?', current.id);
         if (hasTime && (isOpen || employee.id !== current.employee_id)) throw new RequestError('Work with recorded time cannot be reassigned.', 409);
         if (hasTime && (current.site_latitude !== (site?.latitude ?? null) || current.site_longitude !== (site?.longitude ?? null))) {
           throw new RequestError('The site cannot change after work time has been recorded.', 409);
         }
-        const paid = db.prepare('SELECT COALESCE(SUM(amount_paise), 0) AS total FROM payments WHERE task_id = ?').get(current.id).total;
+        const { total: paid } = await store.get('SELECT COALESCE(SUM(amount_paise), 0) AS total FROM payments WHERE task_id = ?', current.id);
         if (income < paid) throw new RequestError('Shoot income cannot be lower than payments already received.');
       }
-      const clientId = isShoot ? clientForTask(body) : null;
+      const clientId = isShoot ? await clientForTask(body, store) : null;
       const values = [title, employee.id, startAt, estimate, location, category, site?.latitude ?? null,
         site?.longitude ?? null, site?.maps_url ?? null, clientId, income, Number(!isOpen), Number(isOpen)];
       let task;
       if (current) {
-        task = db.prepare(`
+        task = await store.get(`
           UPDATE tasks SET title = ?, employee_id = ?, start_at = ?, estimate = ?, location = ?, category = ?,
             site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?
           WHERE id = ? RETURNING *
-        `).get(...values, current.id);
+        `, ...values, current.id);
         if (current.start_at !== startAt || current.employee_id !== employee.id || isOpen) {
-          db.prepare('DELETE FROM reminders WHERE task_id = ?').run(task.id);
+          await store.run('DELETE FROM reminders WHERE task_id = ?', task.id);
         }
-        if (!isOpen) db.prepare("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND status = 'pending'").run(now, task.id);
+        if (!isOpen) await store.run("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND status = 'pending'", now, task.id);
       } else {
-        task = db.prepare(`
+        task = await store.get(`
           INSERT INTO tasks (title, employee_id, start_at, estimate, location, category, site_latitude,
             site_longitude, maps_url, client_id, income_paise, priority, is_open)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
-        `).get(...values);
+        `, ...values);
       }
-      refreshReminders(db, now);
+      await refreshReminders(store, now);
       return task;
     });
   }
 
   function submitRequest(body, actor, now) {
     if (actor.is_admin) throw new RequestError('Admins can assign work from the schedule.', 403);
-    const task = getTask(body.taskId);
-    if (!task.is_open || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
-    const note = optional(body.note, 'request note', 500);
-    const request = db.prepare(`
-      INSERT INTO work_requests (task_id, employee_id, note, requested_at, status)
-      VALUES (?, ?, ?, ?, 'pending') ON CONFLICT (task_id, employee_id) DO NOTHING RETURNING *
-    `).get(task.id, actor.id, note, now);
-    if (!request) throw new RequestError('You have already requested this work.', 409);
-    return request;
+    return db.transaction(async (store) => {
+      const task = await getTask(body.taskId, store);
+      if (!task.is_open || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
+      const note = optional(body.note, 'request note', 500);
+      const request = await store.get(`
+        INSERT INTO work_requests (task_id, employee_id, note, requested_at, status)
+        VALUES (?, ?, ?, ?, 'pending') ON CONFLICT (task_id, employee_id) DO NOTHING RETURNING *
+      `, task.id, actor.id, note, now);
+      if (!request) throw new RequestError('You have already requested this work.', 409);
+      return request;
+    });
   }
 
   function decideRequest(body, now) {
     if (!['approved', 'declined'].includes(body.status)) throw new RequestError('Choose approve or decline.');
-    return transaction(() => {
-      const request = db.prepare('SELECT * FROM work_requests WHERE id = ?').get(Number(body.id));
+    return db.transaction(async (store) => {
+      const request = await store.get('SELECT * FROM work_requests WHERE id = ?', idValue(body.id));
       if (request?.status !== 'pending') throw new RequestError('This request is no longer pending.', 409);
-      const task = getTask(request.task_id);
+      const task = await getTask(request.task_id, store);
       if (body.status === 'approved') {
         if (!task.is_open || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
-        getEmployee(request.employee_id);
-        db.prepare('UPDATE tasks SET employee_id = ?, is_open = 0, priority = 1 WHERE id = ?').run(request.employee_id, task.id);
-        db.prepare("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND id != ? AND status = 'pending'")
-          .run(now, task.id, request.id);
-        refreshReminders(db, now);
+        await getEmployee(request.employee_id, store);
+        await store.run('UPDATE tasks SET employee_id = ?, is_open = 0, priority = 1 WHERE id = ?', request.employee_id, task.id);
+        await store.run("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND id != ? AND status = 'pending'", now, task.id, request.id);
+        await refreshReminders(store, now);
       }
-      return db.prepare('UPDATE work_requests SET status = ?, decided_at = ? WHERE id = ? RETURNING *')
-        .get(body.status, now, request.id);
+      return await store.get('UPDATE work_requests SET status = ?, decided_at = ? WHERE id = ? RETURNING *', body.status, now, request.id);
     });
   }
 
@@ -421,119 +430,106 @@ export function createApi(db) {
     const amount = paise(body.amount);
     const date = ledgerDate(body.date, now);
     const note = optional(body.note, 'payment reference', 300);
-    return transaction(() => {
-      const existing = body.id ? db.prepare('SELECT id, task_id, amount_paise FROM payments WHERE id = ?').get(Number(body.id)) : null;
+    return db.transaction(async (store) => {
+      const existing = body.id ? await store.get('SELECT id, task_id, amount_paise FROM payments WHERE id = ?', idValue(body.id)) : null;
       if (body.id && !existing) throw new RequestError('Payment not found.', 404);
-      const task = getTask(existing?.task_id ?? body.taskId);
+      const task = await getTask(existing?.task_id ?? body.taskId, store);
       if (task.category !== 'Photo shoot') throw new RequestError('Choose a shoot to record payment.');
-      const paid = db.prepare('SELECT COALESCE(SUM(amount_paise), 0) AS total FROM payments WHERE task_id = ?').get(task.id).total;
+      const { total: paid } = await store.get('SELECT COALESCE(SUM(amount_paise), 0) AS total FROM payments WHERE task_id = ?', task.id);
       if (amount > task.income_paise - paid + (existing?.amount_paise ?? 0)) {
         throw new RequestError('Payment exceeds the outstanding balance.');
       }
       if (existing) {
-        return db.prepare('UPDATE payments SET amount_paise = ?, paid_on = ?, note = ? WHERE id = ? RETURNING *')
-          .get(amount, date, note, existing.id);
+        return await store.get('UPDATE payments SET amount_paise = ?, paid_on = ?, note = ? WHERE id = ? RETURNING *', amount, date, note, existing.id);
       }
-      return db.prepare('INSERT INTO payments (task_id, amount_paise, paid_on, note) VALUES (?, ?, ?, ?) RETURNING *')
-        .get(task.id, amount, date, note);
+      return await store.get('INSERT INTO payments (task_id, amount_paise, paid_on, note) VALUES (?, ?, ?, ?) RETURNING *', task.id, amount, date, note);
     });
   }
   function recordAttendance(employeeId, command, now) {
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const latest = db.prepare('SELECT * FROM attendance WHERE employee_id = ? ORDER BY clock_in DESC, id DESC LIMIT 1').get(employeeId);
-      const tasks = db.prepare("SELECT * FROM tasks WHERE employee_id = ? AND category = 'Photo shoot' AND is_open = 0").all(employeeId);
-      const change = attendanceTransition({ command, latest, office: officeSite(), tasks, employeeId, now });
+    return db.transaction(async (store) => {
+      if (command.taskId != null && command.action === 'in') await ownTask(command.taskId, { id: employeeId }, store);
+      const latest = await store.get('SELECT * FROM attendance WHERE employee_id = ? ORDER BY clock_in DESC, id DESC LIMIT 1', employeeId);
+      const tasks = await store.all("SELECT * FROM tasks WHERE employee_id = ? AND category = 'Photo shoot' AND is_open = 0", employeeId);
+      const change = attendanceTransition({ command, latest, office: await officeSite(store), tasks, employeeId, now });
       let shift = null;
       if (change?.type === 'open') {
-        db.prepare('UPDATE attendance SET resume_pending = 0 WHERE employee_id = ? AND resume_pending = 1').run(employeeId);
-        shift = db.prepare(`
+        await store.run('UPDATE attendance SET resume_pending = 0 WHERE employee_id = ? AND resume_pending = 1', employeeId);
+        shift = await store.get(`
           INSERT INTO attendance (employee_id, clock_in, in_location, site, in_reason)
           VALUES (?, ?, ?, ?, ?) RETURNING *
-        `).get(employeeId, now, JSON.stringify(change.location), JSON.stringify(change.site), change.reason);
+        `, employeeId, now, JSON.stringify(change.location), JSON.stringify(change.site), change.reason);
         if (change.site.taskId) {
-          db.prepare('UPDATE task_sessions SET end_at = ? WHERE employee_id = ? AND end_at IS NULL').run(now, employeeId);
-          db.prepare('INSERT INTO task_sessions (task_id, employee_id, start_at) VALUES (?, ?, ?)')
-            .run(change.site.taskId, employeeId, now);
+          await store.run('UPDATE task_sessions SET end_at = ? WHERE employee_id = ? AND end_at IS NULL', now, employeeId);
+          await store.run('INSERT INTO task_sessions (task_id, employee_id, start_at) VALUES (?, ?, ?)', change.site.taskId, employeeId, now);
         }
       }
       if (change?.type === 'close') {
-        shift = db.prepare(`
+        shift = await store.get(`
           UPDATE attendance SET clock_out = ?, out_location = ?, out_reason = ?, resume_pending = ? WHERE id = ? RETURNING *
-        `).get(now, JSON.stringify(change.location), change.reason, Number(change.reason === 'geofence'), change.shiftId);
+        `, now, JSON.stringify(change.location), change.reason, Number(change.reason === 'geofence'), change.shiftId);
         if (change.taskId) {
-          db.prepare('UPDATE task_sessions SET end_at = ? WHERE task_id = ? AND employee_id = ? AND end_at IS NULL')
-            .run(now, change.taskId, employeeId);
+          await store.run('UPDATE task_sessions SET end_at = ? WHERE task_id = ? AND employee_id = ? AND end_at IS NULL', now, change.taskId, employeeId);
         }
       }
       if (change?.type === 'cancel') {
-        db.prepare('UPDATE attendance SET resume_pending = 0 WHERE id = ?').run(change.shiftId);
+        await store.run('UPDATE attendance SET resume_pending = 0 WHERE id = ?', change.shiftId);
       }
-      db.exec('COMMIT');
       return shift;
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
+    });
   }
 
   function taskAction(body, actor, now) {
-    const task = ownTask(body.taskId, actor);
-    if (task.completed_at) throw new RequestError('This work is already complete.', 409);
-    const active = db.prepare('SELECT * FROM task_sessions WHERE employee_id = ? AND end_at IS NULL').get(actor.id);
-    if (body.action === 'start' || (body.action === 'complete' && task.category === 'Photo shoot')) {
-      if (task.category === 'Photo shoot') {
-        const current = db.prepare('SELECT site FROM attendance WHERE employee_id = ? AND clock_out IS NULL').get(actor.id);
-        if (!shootSite(task) || !current?.site || JSON.parse(current.site).taskId !== task.id) {
-          throw new RequestError('Clock in at this shoot before working on it.', 409);
+    return db.transaction(async (store) => {
+      const task = await ownTask(body.taskId, actor, store);
+      if (task.completed_at) throw new RequestError('This work is already complete.', 409);
+      const active = await store.get('SELECT * FROM task_sessions WHERE employee_id = ? AND end_at IS NULL', actor.id);
+      if (body.action === 'start' || (body.action === 'complete' && task.category === 'Photo shoot')) {
+        if (task.category === 'Photo shoot') {
+          const current = await store.get('SELECT site FROM attendance WHERE employee_id = ? AND clock_out IS NULL', actor.id);
+          if (!shootSite(task) || !current?.site || JSON.parse(current.site).taskId !== task.id) {
+            throw new RequestError('Clock in at this shoot before working on it.', 409);
+          }
         }
       }
-    }
-    if (body.action === 'start') {
-      if (active) throw new RequestError('Pause the running task before starting another.', 409);
-      return db.prepare('INSERT INTO task_sessions (task_id, employee_id, start_at) VALUES (?, ?, ?) RETURNING *')
-        .get(task.id, actor.id, now);
-    }
-    if (body.action === 'pause' && active?.task_id === task.id) {
-      return db.prepare('UPDATE task_sessions SET end_at = ? WHERE id = ? RETURNING *').get(now, active.id);
-    }
-    if (body.action === 'complete') {
-      return transaction(() => {
-        if (active?.task_id === task.id) db.prepare('UPDATE task_sessions SET end_at = ? WHERE id = ?').run(now, active.id);
-        return db.prepare('UPDATE tasks SET completed_at = ? WHERE id = ? RETURNING *').get(now, task.id);
-      });
-    }
-    throw new RequestError('This work action is unavailable.', 409);
+      if (body.action === 'start') {
+        if (active) throw new RequestError('Pause the running task before starting another.', 409);
+        return await store.get('INSERT INTO task_sessions (task_id, employee_id, start_at) VALUES (?, ?, ?) RETURNING *', task.id, actor.id, now);
+      }
+      if (body.action === 'pause' && active?.task_id === task.id) {
+        return await store.get('UPDATE task_sessions SET end_at = ? WHERE id = ? RETURNING *', now, active.id);
+      }
+      if (body.action === 'complete') {
+        if (active?.task_id === task.id) await store.run('UPDATE task_sessions SET end_at = ? WHERE id = ?', now, active.id);
+        return store.get('UPDATE tasks SET completed_at = ? WHERE id = ? RETURNING *', now, task.id);
+      }
+      throw new RequestError('This work action is unavailable.', 409);
+    });
   }
 
   return async function api(req, res, path) {
     const now = Date.now();
-    const actor = authenticatedEmployee(db, req, now);
+    const actor = await authenticatedEmployee(db, req, now, bearer);
     if (req.method === 'GET' && path === '/api/session') {
-      const setup = needsSetup();
-      return { actor, needsSetup: setup, requiresSetupToken: setup && (Boolean(process.env.ADMIN_SETUP_TOKEN) || !localSetup(req)) };
+      const setup = await needsSetup();
+      return { actor, needsSetup: setup, requiresSetupToken: setup && (bearer || Boolean(setupToken) || !localSetup(req)) };
     }
     if (req.method === 'GET' && path === '/api/state') {
       if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
       return overview(actor, now);
     }
     if (req.method !== 'POST') throw new RequestError('Route not found.', 404);
-    const body = await readBody(req);
+    const body = await readBody(req, siteOrigin);
     if (path === '/api/bootstrap') return bootstrap(req, res, body, now);
     if (path === '/api/login') return signIn(req, res, body, now);
-    if (path === '/api/logout') {
-      res.setHeader('Set-Cookie', endSession(db, req, secureCookies));
-      return { ok: true };
-    }
+    if (path === '/api/logout') return endSession(db, req, res, sessionOptions);
     if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
     if (path === '/api/attendance') {
-      if (body.taskId != null && body.action === 'in') ownTask(body.taskId, actor);
       return recordAttendance(actor.id, body, now);
     }
     if (path === '/api/task-action') return taskAction(body, actor, now);
     if (path === '/api/work-requests') return submitRequest(body, actor, now);
     if (path === '/api/reminders/read') {
-      db.prepare('UPDATE reminders SET read_at = ? WHERE employee_id = ? AND read_at IS NULL').run(now, actor.id);
+      await db.run('UPDATE reminders SET read_at = ? WHERE employee_id = ? AND read_at IS NULL', now, actor.id);
       return { ok: true };
     }
     adminOnly(actor);
@@ -546,20 +542,20 @@ export function createApi(db) {
       const values = [text(body.name, 'expense name'), text(body.category, 'expense category'), paise(body.amount),
         ledgerDate(body.date, now), optional(body.note, 'expense notes', 300)];
       const entry = body.id
-        ? db.prepare('UPDATE expenses SET name = ?, category = ?, amount_paise = ?, spent_on = ?, note = ? WHERE id = ? RETURNING *').get(...values, Number(body.id))
-        : db.prepare('INSERT INTO expenses (name, category, amount_paise, spent_on, note) VALUES (?, ?, ?, ?, ?) RETURNING *').get(...values);
+        ? await db.get('UPDATE expenses SET name = ?, category = ?, amount_paise = ?, spent_on = ?, note = ? WHERE id = ? RETURNING *', ...values, idValue(body.id))
+        : await db.get('INSERT INTO expenses (name, category, amount_paise, spent_on, note) VALUES (?, ?, ?, ?, ?) RETURNING *', ...values);
       if (!entry) throw new RequestError('Expense not found.', 404);
       return entry;
     }
     if (path === '/api/office') {
       const name = text(body.name, 'office name');
       const site = await siteFrom(body);
-      return db.prepare(`
+      return await db.get(`
         INSERT INTO office (id, name, latitude, longitude, maps_url) VALUES (1, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET name = excluded.name, latitude = excluded.latitude,
           longitude = excluded.longitude, maps_url = excluded.maps_url
         RETURNING name, latitude, longitude, maps_url
-      `).get(name, site.latitude, site.longitude, site.maps_url);
+      `, name, site.latitude, site.longitude, site.maps_url);
     }
     throw new RequestError('Route not found.', 404);
   };

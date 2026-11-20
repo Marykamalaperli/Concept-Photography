@@ -25,6 +25,7 @@ jobs:
       - run: npm test
       - run: npm run build:pages
         env:
+          USE_SUPABASE: '1'
           WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:

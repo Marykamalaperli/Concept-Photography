@@ -1,6 +1,4 @@
-const minute = 60_000;
-
-export function openStore(db, { now = Date.now() } = {}) {
+export function openStore(db) {
   db.exec(`
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS employees (
@@ -103,14 +101,5 @@ export function openStore(db, { now = Date.now() } = {}) {
       throw error;
     }
   }
-  refreshReminders(db, now);
   return db;
-}
-
-export function refreshReminders(db, now = Date.now()) {
-  db.prepare(`
-    INSERT OR IGNORE INTO reminders (task_id, employee_id, sent_at)
-    SELECT id, employee_id, ? FROM tasks
-    WHERE completed_at IS NULL AND is_open = 0 AND start_at BETWEEN ? AND ?
-  `).run(now, now, now + 30 * minute);
 }

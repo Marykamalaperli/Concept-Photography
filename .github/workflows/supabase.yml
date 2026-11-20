@@ -1,0 +1,49 @@
+name: Deploy Supabase backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: concept-supabase
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.83.0
+      - name: Apply database migration and deploy API
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          ADMIN_SETUP_TOKEN: ${{ secrets.SUPABASE_ADMIN_SETUP_TOKEN }}
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::Set the SUPABASE_ACCESS_TOKEN repository secret."; exit 1; }
+          test -n "$SUPABASE_DB_PASSWORD" || { echo "::error::Set the SUPABASE_DB_PASSWORD repository secret."; exit 1; }
+          [[ -z $ADMIN_SETUP_TOKEN || $ADMIN_SETUP_TOKEN =~ ^[A-Za-z0-9_-]{24,}$ ]] || { echo "::error::Use a randomly generated URL-safe admin setup token of at least 24 characters."; exit 1; }
+          project_url=$(jq -er .url supabase/project.json)
+          project_ref=${project_url#https://}
+          project_ref=${project_ref%.supabase.co}
+          [[ $project_ref =~ ^[a-z0-9]{20}$ ]] || { echo "::error::Invalid Supabase project ref."; exit 1; }
+          site_origin=$(jq -er .siteOrigin supabase/project.json)
+          supabase link --project-ref "$project_ref"
+          supabase db push --linked --yes
+          umask 077
+          vars_file=$(mktemp)
+          trap 'rm -f "$vars_file"' EXIT
+          printf 'CONCEPT_SITE_ORIGIN=%s\n' "$site_origin" > "$vars_file"
+          if [ -n "$ADMIN_SETUP_TOKEN" ]; then
+            printf 'ADMIN_SETUP_TOKEN=%s\n' "$ADMIN_SETUP_TOKEN" >> "$vars_file"
+          fi
+          supabase secrets set --project-ref "$project_ref" --env-file "$vars_file"
+          supabase functions deploy concept-api --project-ref "$project_ref" --use-api --no-verify-jwt
+          curl --retry 5 --retry-all-errors --fail --silent --show-error --max-time 15 \
+            -H "Origin: $site_origin" "$project_url/functions/v1/concept-api/api/session" |
+            jq -e 'has("actor") and has("needsSetup")' >/dev/null

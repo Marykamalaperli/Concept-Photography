@@ -1,6 +1,10 @@
 import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
 import { accessView } from './access-view.js';
 
+const apiOrigin = document.querySelector('meta[name="concept-api"]')?.content;
+const sessionKey = apiOrigin && `concept-photography-session:${apiOrigin}`;
+let accessToken = sessionKey ? sessionStorage.getItem(sessionKey) : null;
+
 const main = document.querySelector('main');
 const sidebar = document.querySelector('#sidebar');
 const topbar = document.querySelector('#topbar');
@@ -581,17 +585,32 @@ function tick() {
   });
 }
 
+function storeSessionToken(token) {
+  if (!sessionKey) return;
+  accessToken = token;
+  if (token) sessionStorage.setItem(sessionKey, token);
+  else sessionStorage.removeItem(sessionKey);
+}
+
 async function request(path, body) {
-  const response = await fetch('/api/' + path, body ? {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  } : undefined);
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const response = await fetch(`${apiOrigin || ''}/api/${path}`, {
+    headers,
+    ...(apiOrigin ? { credentials: 'omit' } : {}),
+    ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
+  });
   const payload = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && session?.actor && path !== 'login') {
-      clearWorkspace({ actor: null, needsSetup: false });
+    if (response.status === 401 && path !== 'login') {
+      storeSessionToken(null);
+      if (session?.actor) clearWorkspace({ actor: null, needsSetup: false });
     }
-    throw new Error(payload.error);
+    throw new Error(payload.error || 'The workspace could not complete the request.');
   }
+  if (path === 'login' || path === 'bootstrap') storeSessionToken(payload.token);
+  if (path === 'logout') storeSessionToken(null);
   return payload;
 }
 
@@ -660,6 +679,7 @@ async function refresh({ force = false } = {}) {
 
 async function loadSession() {
   session = await request('session');
+  if (!session.actor) storeSessionToken(null);
   if (session.actor) {
     await refresh({ force: true });
   } else {
@@ -1111,7 +1131,9 @@ window.addEventListener('hashchange', () => {
 loadSession().catch(() => {
   main.innerHTML = accessView({
     title: 'Workspace unavailable',
-    description: 'The workspace could not load. Check your connection and try again.',
+    description: apiOrigin
+      ? 'The studio could not connect to its Supabase workspace. Try again or ask your admin to check the deployment.'
+      : 'The workspace could not load. Check your connection and try again.',
     content: '<a class="btn primary auth-submit" href="./">Try again</a>',
   });
 });

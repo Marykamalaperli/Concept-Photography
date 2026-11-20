@@ -4,17 +4,22 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openStore, refreshReminders } from './store.js';
-import { createApi } from './workspace-api.js';
+import { openStore } from './store.js';
+import { sqliteAdapter } from './sqlite-adapter.js';
+import { createApi } from './supabase/functions/_shared/workspace-api.js';
+import { refreshReminders } from './supabase/functions/_shared/reminders.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const database = process.env.DATABASE_PATH || resolve(root, 'data/workforce.sqlite');
 if (database !== ':memory:') mkdirSync(dirname(database), { recursive: true });
-const db = openStore(new DatabaseSync(database));
+const db = sqliteAdapter(openStore(new DatabaseSync(database)));
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
 
-const api = createApi(db);
+const api = createApi(db, {
+  setupToken: process.env.ADMIN_SETUP_TOKEN,
+  secureCookies: process.env.SECURE_COOKIES === '1',
+});
 
 const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
@@ -22,7 +27,7 @@ const assets = new Map([
   ['/app.js', ['public/app.js', 'text/javascript']],
   ['/access-view.js', ['public/access-view.js', 'text/javascript']],
   ['/sign-in.webp', ['public/sign-in.webp', 'image/webp']],
-  ['/attendance-policy.js', ['public/attendance-policy.js', 'text/javascript']],
+  ['/attendance-policy.js', ['supabase/functions/_shared/attendance-policy.js', 'text/javascript']],
   ['/studio.webp', ['public/studio.webp', 'image/webp']],
   ['/inter.woff2', ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'font/woff2']],
   ['/manrope.woff2', ['node_modules/@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2', 'font/woff2']],
@@ -62,11 +67,7 @@ const server = createServer(async (req, res) => {
 });
 
 setInterval(() => {
-  try {
-    refreshReminders(db);
-  } catch (error) {
-    console.error('Could not refresh work reminders.', error);
-  }
+  refreshReminders(db).catch((error) => console.error('Could not refresh work reminders.', error));
 }, 15000).unref();
 
 server.listen(port, host, () => console.log(`Concept Photography workspace listening on http://${host}:${server.address().port}`));

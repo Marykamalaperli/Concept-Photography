@@ -6,10 +6,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { mapsLocation } from '../maps.js';
-import { openStore, refreshReminders } from '../store.js';
+import { mapsLocation } from '../supabase/functions/_shared/maps.js';
+import { refreshReminders } from '../supabase/functions/_shared/reminders.js';
+import { openStore } from '../store.js';
+import { sqliteAdapter } from '../sqlite-adapter.js';
 
-test('a scheduled task produces one reminder in the 30-minute window', () => {
+test('a scheduled task produces one reminder in the 30-minute window', async () => {
   const db = openStore(new DatabaseSync(':memory:'));
   const start = Date.parse('2026-11-20T10:00:00Z');
   const minute = 60_000;
@@ -22,10 +24,10 @@ test('a scheduled task produces one reminder in the 30-minute window', () => {
   insertTask.run(2, 'Early delivery', start, start - 31 * minute, 0);
   insertTask.run(3, 'Unassigned', start, null, 1);
   const reminders = () => db.prepare('SELECT task_id, employee_id, sent_at FROM reminders').all();
-  refreshReminders(db, start - 30 * minute - 1);
+  await refreshReminders(sqliteAdapter(db), start - 30 * minute - 1);
   assert.equal(reminders().length, 0);
-  refreshReminders(db, start - 30 * minute);
-  refreshReminders(db, start - 10 * minute);
+  await refreshReminders(sqliteAdapter(db), start - 30 * minute);
+  await refreshReminders(sqliteAdapter(db), start - 10 * minute);
   assert.deepEqual(reminders().map((row) => ({ ...row })), [
     { task_id: 1, employee_id: 1, sent_at: start - 30 * minute },
   ]);

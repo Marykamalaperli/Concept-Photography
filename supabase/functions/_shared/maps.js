@@ -1,4 +1,4 @@
-import { siteCoordinates } from './public/attendance-policy.js';
+import { siteCoordinates } from './attendance-policy.js';
 
 const googleHosts = new Set(['www.google.com', 'google.com', 'maps.google.com', 'www.google.co.in', 'maps.google.co.in']);
 const shortHosts = new Set(['maps.app.goo.gl', 'goo.gl']);
