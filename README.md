@@ -26,3 +26,11 @@ Open http://localhost:3000. The first launch creates a SQLite database in `data/
 The workspace runs on loopback by default. The employee selector is for demonstration and provides no authentication or access control. Use sample data until employee sign-in and manager permissions are added. Reminder delivery is in-app and optionally via an open desktop browser.
 
 Set `SEED_DEMO=0` and `DATABASE_PATH` to a new SQLite file for a clean workspace. For example, `SEED_DEMO=0 DATABASE_PATH=data/clean.sqlite npm start`. Set `PORT` to use a different local port.
+
+## GitHub Pages demo
+
+In the GitHub repository, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. Then run **Deploy GitHub Pages** from the Actions tab, or push to `main`. Once the workflow deploys, the demo is available at https://marykamalaperli.github.io/Concept-Photography/.
+
+The Pages build packages sample records and saves changes in the browser that made them. Employees, tasks, time entries, and GPS records are local to that browser. Reminder checks run while the demo is open. The Node.js and SQLite version can still be run locally using the instructions above.
+
+Run `npm run build:pages` to generate the static site in `dist/`.

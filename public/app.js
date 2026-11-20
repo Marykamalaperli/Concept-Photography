@@ -4,6 +4,8 @@ const topbar = document.querySelector('#topbar');
 const dialog = document.querySelector('#dialog');
 const toast = document.querySelector('#toast');
 const zone = 'Asia/Kolkata';
+const pagesMode = document.querySelector('meta[name="concept-mode"]')?.content === 'pages';
+const demo = pagesMode ? import('./pages-demo.js') : null;
 const studioTime = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
 const studioDate = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'long', day: 'numeric', month: 'long' });
 const shortDate = new Intl.DateTimeFormat('en-GB', { timeZone: zone, day: 'numeric', month: 'short' });
@@ -42,7 +44,7 @@ let toastTimer;
 const e = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
-const icon = (name) => `<i class="icon" aria-hidden="true" style="--icon:url('/icons/${name}.svg')"></i>`;
+const icon = (name) => `<i class="icon" aria-hidden="true" style="--icon:url('./icons/${name}.svg')"></i>`;
 const tile = (name, color) => `<span class="tile ${color}">${icon(name)}</span>`;
 const employee = (id) => state.employees.find((person) => person.id === id);
 const actor = () => employee(actorId);
@@ -119,11 +121,11 @@ function renderChrome() {
         ${icon(symbol)}${label}${key === 'notifications' && unread ? `<span class="nav-count">${unread}</span>` : ''}
       </a>`).join('')}
     </nav>
-    <div class="sidebar-foot">${icon('aperture')}<div><strong>Concept Photography</strong><small>Studio workspace · IST</small></div></div>`;
+    <div class="sidebar-foot">${icon('aperture')}<div><strong>Concept Photography</strong><small>${pagesMode ? 'Browser demo' : 'Studio workspace'} · IST</small></div></div>`;
   topbar.innerHTML = `
     <div class="breadcrumb">
       <button type="button" class="icon-button menu-button" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="${mobileMenu}" data-action="menu">${icon('menu')}</button>
-      <span class="workspace">Workspace</span><span class="trail">${icon('chevron-right')}</span><strong>${section}</strong>
+      <span class="workspace">${pagesMode ? 'Browser demo' : 'Workspace'}</span><span class="trail">${icon('chevron-right')}</span><strong>${section}</strong>
     </div>
     <div class="top-actions">
       <a href="#notifications" class="icon-button" aria-label="Notifications${unread ? `, ${unread} unread` : ''}">${icon('bell')}${unread ? '<span class="bell-dot"></span>' : ''}</a>
@@ -203,7 +205,7 @@ function dashboard() {
     ['Completed Today', completed, 'circle-check', 'sand'],
   ];
   return `
-    ${heading('Dashboard', 'Manage your team, schedule, and attendance.', actionButton('New Task', 'new-task', 'plus'))}
+    ${heading('Dashboard', pagesMode ? 'Demo data and changes stay in this browser.' : 'Manage your team, schedule, and attendance.', actionButton('New Task', 'new-task', 'plus'))}
     <section class="hero" aria-label="Studio dashboard">
       <div class="hero-date">${icon('calendar-days')} ${studioDate.format(Date.now())}</div>
       <h2>${person ? `Welcome back, ${e(person.name.split(/\s+/)[0])}` : 'Welcome to the studio'}</h2>
@@ -354,6 +356,7 @@ function tick() {
 }
 
 async function request(path, body) {
+  if (demo) return (await demo).demoRequest(path, body);
   const response = await fetch('/api/' + path, body ? {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
