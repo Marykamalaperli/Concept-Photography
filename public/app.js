@@ -1,5 +1,8 @@
 import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
 import { loginView } from './access-view.js';
+import {
+  currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
+} from './mobile-alerts.js';
 
 const apiOrigin = document.querySelector('meta[name="concept-api"]')?.content;
 const sessionKey = apiOrigin && `concept-photography-session:${apiOrigin}`;
@@ -63,6 +66,7 @@ let watcher;
 let lastFix;
 let observing = false;
 let shownShootIds = '';
+let mobileDevice;
 
 const e = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -511,13 +515,49 @@ function attendancePage() {
       ${attendanceTable(state.attendance, true)}
     </section></div>`;
 }
+function mobileAlertControls() {
+  if (!apiOrigin) return { description: 'Mobile alerts are available on the hosted workspace.' };
+  if (needsHomeScreen()) return {
+    description: 'On iPhone or iPad, use Safari’s Share menu to add this site to your Home Screen. Open the installed app and enable mobile alerts.',
+  };
+  if (!supportsMobileAlerts()) return { description: 'Mobile alerts are unavailable in this browser.' };
+  if (mobileDevice?.error) return {
+    description: 'Could not check this device’s notification settings.',
+    action: actionButton('Retry mobile alerts', 'retry-alerts', 'refresh-cw', 'secondary'),
+  };
+  if (!mobileDevice?.registration) return { description: 'Checking mobile alert settings…' };
+  if (mobileDevice.enabled) return {
+    description: 'Mobile alerts are on for this device. You can close the workspace and still receive reminders.',
+    action: actionButton('Disable mobile alerts', 'disable-alerts', 'bell-off', 'secondary'),
+  };
+  return {
+    description: 'Enable alerts on this device to receive work reminders 30 minutes before the scheduled start.',
+    action: actionButton('Enable mobile alerts', 'enable-alerts', 'bell', 'secondary'),
+  };
+}
+
+async function prepareMobileAlerts() {
+  if (!apiOrigin || mobileDevice || needsHomeScreen() || !supportsMobileAlerts()) return;
+  const device = {};
+  mobileDevice = device;
+  try {
+    const [registration, key] = await Promise.all([preparePushWorker(), request('push/key')]);
+    const subscription = await registration.pushManager.getSubscription();
+    const status = subscription ? await request('push/status', { endpoint: subscription.endpoint }) : { enabled: false };
+    Object.assign(device, { registration, key: key.publicKey, enabled: status.enabled });
+  } catch {
+    device.error = true;
+  }
+  if (mobileDevice === device && page === 'notifications' && actor()) render();
+}
+
 function notificationsPage() {
   const notices = reminders();
-  const showEnable = 'Notification' in window && Notification.permission !== 'granted';
-  return `${heading('Notifications', 'Work reminders arrive up to 30 minutes before a scheduled task.', showEnable ? actionButton('Enable browser alerts', 'alerts', 'bell', 'secondary') : '')}
+  const mobile = mobileAlertControls();
+  return `${heading('Notifications', 'Reminders for your assigned work.', mobile.action)}
     <section class="panel">
-      <div class="panel-head"><div><h2>${actor() ? `Reminders for ${e(actor().name)}` : 'Work reminders'}</h2><p>Browser alerts are available while this workspace is open.</p></div>
-        ${notices.some((notice) => !notice.read_at) ? actionButton('Mark all read', 'read', 'check-check', 'secondary') : ''}</div>
+      <div class="panel-head"><div><h2>${actor() ? `Reminders for ${e(actor().name)}` : 'Work reminders'}</h2><p>${mobile.description}</p></div>
+      ${notices.some((notice) => !notice.read_at) ? actionButton('Mark all read', 'read', 'check-check', 'secondary') : ''}</div>
       ${notices.length ? notices.map((notice) => `<div class="notice-row">
         ${tile('bell', 'peach')}<div><h3>${e(notice.title)}</h3>
         <p>Scheduled for ${shortDate.format(notice.start_at)} at ${time(notice.start_at)} IST</p></div>${notice.read_at ? '' : tag('Unread', 'peach')}
@@ -538,6 +578,7 @@ function render() {
   shownShootIds = shootIds();
   renderChrome();
   main.innerHTML = pages[page]();
+  if (page === 'notifications') prepareMobileAlerts();
   if (dialog.open && dialog.dataset.taskId) {
     const task = state.tasks.find((item) => item.id === Number(dialog.dataset.taskId));
     if (task) taskDialog(task);
@@ -617,17 +658,6 @@ function showToast(message) {
 function notifyReminders(items) {
   if (!items.length) return;
   showToast(`Upcoming work: ${items.map((notice) => notice.title).join(', ')}`);
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  for (const notice of items) {
-    try {
-      new Notification('Concept Photography · Work reminder', {
-        body: `${notice.title} starts at ${time(notice.start_at)} IST.`,
-        tag: 'concept-task-' + notice.task_id,
-      });
-    } catch {
-      // The in-app reminder remains available when desktop alerts are unsupported.
-    }
-  }
 }
 
 function clearWorkspace(info) {
@@ -637,6 +667,7 @@ function clearWorkspace(info) {
   snapshot = undefined;
   state = initialState();
   actorId = undefined;
+  mobileDevice = undefined;
   session = info;
   clockTarget = '';
   employeeFilter = 'all';
@@ -997,7 +1028,9 @@ document.addEventListener('click', (event) => {
       break;
     case 'sign-out':
       mutate(button, async () => {
-        await request('logout', {});
+        const subscription = apiOrigin ? await currentPushSubscription() : null;
+        await request('logout', { pushEndpoint: subscription?.endpoint });
+        if (subscription) await subscription.unsubscribe().catch(() => {});
         history.replaceState(null, '', location.pathname);
         clearWorkspace({ actor: null });
       });
@@ -1044,11 +1077,30 @@ document.addEventListener('click', (event) => {
       applyAction(button, 'attendance', { shiftId: latestShift()?.id, action: 'cancel-return' }, 'Automatic return cancelled.');
       break;
     case 'read': applyAction(button, 'reminders/read', {}); break;
-    case 'alerts':
+    case 'retry-alerts':
+      mobileDevice = undefined;
+      render();
+      break;
+    case 'enable-alerts':
       mutate(button, async () => {
-        const permission = await Notification.requestPermission();
+        const device = mobileDevice;
+        const subscription = await subscribeToMobileAlerts(device.registration, device.key);
+        await request('push/register', subscription.toJSON());
+        device.enabled = true;
         render();
-        showToast(permission === 'granted' ? 'Browser alerts enabled.' : 'Reminders are available in Notifications.');
+        showToast('Mobile alerts enabled on this device.');
+      });
+      break;
+    case 'disable-alerts':
+      mutate(button, async () => {
+        const subscription = await currentPushSubscription();
+        if (subscription) {
+          await request('push/remove', { endpoint: subscription.endpoint });
+          await subscription.unsubscribe().catch(() => {});
+        }
+        mobileDevice.enabled = false;
+        render();
+        showToast('Mobile alerts disabled on this device.');
       });
       break;
   }

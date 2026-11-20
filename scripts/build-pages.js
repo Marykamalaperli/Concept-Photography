@@ -43,7 +43,10 @@ async function pagesApp() {
   const entry = await readFile(new URL('index.html', publicFiles), 'utf8');
   const meta = `  <meta name="concept-api" content="${url}/functions/v1/concept-api">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${url}; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'">`;
-  const assets = ['styles.css', 'sign-in.webp', 'studio.webp', 'app.js', 'access-view.js'];
+  const assets = [
+    'styles.css', 'sign-in.webp', 'studio.webp', 'app.js', 'access-view.js',
+    'mobile-alerts.js', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
+  ];
   await Promise.all([
     ...assets.map((asset) => cp(new URL(asset, publicFiles), new URL(asset, output))),
     cp(new URL('../supabase/functions/_shared/attendance-policy.js', import.meta.url), new URL('attendance-policy.js', output)),

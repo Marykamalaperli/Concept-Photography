@@ -1,0 +1,14 @@
+{
+  "id": "./",
+  "name": "Concept Photography",
+  "short_name": "Concept Studio",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f1eb",
+  "theme_color": "#1e1c1b",
+  "icons": [
+    { "src": "./app-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

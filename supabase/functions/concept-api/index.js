@@ -1,5 +1,7 @@
 import postgres from 'npm:postgres@3.4.9';
+import webPush from 'npm:web-push@3.6.7';
 import { createApi } from '../_shared/workspace-api.js';
+import { createMobilePush } from '../_shared/mobile-push.js';
 import { supabaseAdminAuth } from '../_shared/supabase-admin.js';
 import { numericTypes, postgresAdapter } from '../_shared/postgres-adapter.js';
 
@@ -23,7 +25,10 @@ const sql = postgres(databaseUrl, {
   types: numericTypes,
 });
 
-const api = createApi(postgresAdapter(sql), {
+const database = postgresAdapter(sql);
+const mobilePush = createMobilePush(webPush, siteOrigin);
+const api = createApi(database, {
+  mobilePush,
   bearer: true,
   adminAuth: supabaseAdminAuth({ url: supabaseUrl, apiKey: anonKey }),
   siteOrigin,
@@ -62,6 +67,9 @@ Deno.serve(async (request, info) => {
     },
   };
   try {
+    if (request.method === 'POST' && path === '/api/internal/push-dispatch') {
+      return json(200, await mobilePush.dispatch(database, request.headers.get('authorization')));
+    }
     return json(200, await api(req, null, path));
   } catch (error) {
     const status = error.status || 500;

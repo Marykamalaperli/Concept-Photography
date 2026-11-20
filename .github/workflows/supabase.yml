@@ -131,6 +131,34 @@ jobs:
             echo "::error::Hosted sign-in did not handle the JSON credential probe (HTTP $status)."
             exit 1
           fi
+      - name: Enable and verify scheduled mobile push
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ steps.project.outputs.ref }}
+          PROJECT_URL: ${{ steps.project.outputs.url }}
+        run: |
+          query_api="https://api.supabase.com/v1/projects/$PROJECT_REF/database/query"
+          query() {
+            local payload
+            payload=$(jq -nc --arg query "$1" '{query: $query}')
+            curl --fail-with-body --silent --show-error --max-time 20 \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Content-Type: application/json' \
+              --data "$payload" "$query_api"
+          }
+          started=$(date +%s%3N)
+          query "update concept.push_settings set dispatch_url = '$PROJECT_URL/functions/v1/concept-api/api/internal/push-dispatch' where id = 1;" >/dev/null
+          query 'select concept.invoke_push_dispatch();' >/dev/null
+          for attempt in $(seq 1 12); do
+            status=$(query "select exists (select 1 from cron.job where jobname = 'concept-mobile-reminders' and active) and coalesce(last_dispatch_at >= $started, false) as ready from concept.push_settings where id = 1;")
+            if jq -e '.[0].ready == true' <<<"$status" >/dev/null; then
+              echo "The hosted mobile notification scheduler completed a dispatch."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The hosted notification scheduler did not complete a dispatch."
+          exit 1
       - name: Remove the retired web setup secret
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

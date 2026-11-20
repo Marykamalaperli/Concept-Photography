@@ -110,7 +110,7 @@ async function siteFrom(body) {
   }
 }
 
-export function createApi(db, { bearer = false, secureCookies = false, adminAuth, siteOrigin } = {}) {
+export function createApi(db, { bearer = false, secureCookies = false, adminAuth, mobilePush, siteOrigin } = {}) {
   const loginAttempts = new Map();
   const sessionOptions = { bearer, secureCookies };
 
@@ -490,6 +490,10 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     let actor = await authenticatedEmployee(db, req, now, bearer);
     if (actor?.is_admin && adminAuth && !await adminAuth.identity(db, actor.id)) actor = null;
     if (req.method === 'GET' && path === '/api/session') return { actor };
+    if (req.method === 'GET' && path === '/api/push/key' && mobilePush) {
+      if (!actor) throw new RequestError('Sign in to enable mobile alerts.', 401);
+      return mobilePush.key(db);
+    }
     if (req.method === 'GET' && path === '/api/state') {
       if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
       return overview(actor, now);
@@ -497,8 +501,16 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     if (req.method !== 'POST') throw new RequestError('Route not found.', 404);
     const body = await readBody(req, siteOrigin);
     if (path === '/api/login') return signIn(req, res, body, now);
-    if (path === '/api/logout') return endSession(db, req, res, sessionOptions);
+    if (path === '/api/logout') {
+      if (actor && mobilePush && body.pushEndpoint) await mobilePush.remove(db, actor.id, body.pushEndpoint);
+      return endSession(db, req, res, sessionOptions);
+    }
     if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
+    if (mobilePush) {
+      if (path === '/api/push/status') return mobilePush.status(db, actor.id, body.endpoint);
+      if (path === '/api/push/register') return mobilePush.register(db, actor.id, body);
+      if (path === '/api/push/remove') return mobilePush.remove(db, actor.id, body.endpoint);
+    }
     if (path === '/api/attendance') {
       return recordAttendance(actor.id, body, now);
     }

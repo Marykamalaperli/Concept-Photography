@@ -30,7 +30,9 @@ Clock in and out at the office or an assigned shoot with a fresh GPS reading. Sh
 
 Keep the workspace open and allow location access for automatic departures and returns. A reliable reading outside the geofence clocks you out. Returning to the same eligible site clocks you back in. **Cancel auto return** ends that waiting state. A locked screen, suspended tab, or closed browser can interrupt the updates. Location access requires HTTPS or localhost.
 
-Scheduled work creates an in-app reminder when its start enters the 30-minute window while the server is running. Supported desktop browsers can also show alerts while the app is open.
+Open **Notifications → Enable mobile alerts** on each phone and grant permission. On an iPhone or iPad, use Safari’s **Share → Add to Home Screen**, then sign in from the installed app and enable alerts there. On Android, enable alerts in a supported browser such as Chrome.
+
+The hosted workspace checks schedules every minute and sends a push around 30 minutes before assigned work starts. Assignments added inside that window are picked up on the next check. Push can arrive while the workspace is closed. Use **Disable mobile alerts** or sign out to stop alerts on that device. Delivery time depends on the phone’s connection and notification settings. The Notifications page also keeps the in-app reminders.
 
 ## Connect the GitHub Pages site to Supabase
 
@@ -43,7 +45,7 @@ The Pages build points to the project in [supabase/project.json](supabase/projec
    | `SUPABASE_ACCESS_TOKEN` | A Supabase access token from the account that can manage the project. |
    | `SUPABASE_DB_PASSWORD` | The project’s Postgres database password. |
 
-2. Run **Actions → Deploy Supabase backend → Run workflow** on `main`. It applies the database migration, sets the allowed website origin, deploys the function, and checks the session endpoint.
+2. Run **Actions → Deploy Supabase backend → Run workflow** on `main`. It applies migrations, sets the allowed website origin, deploys the function, and verifies sign-in and the scheduled push worker.
 3. In **Supabase → Authentication → Users**, use **Add user** to create the admin with an email and password. Enable **Auto Confirm User** when creating it.
 4. In the project’s **SQL Editor**, authorize that Auth user as the studio admin. Replace the example email with the email you just created.
 
