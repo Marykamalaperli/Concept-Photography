@@ -55,12 +55,45 @@ jobs:
           ADMIN_SETUP_TOKEN: ${{ secrets.SUPABASE_ADMIN_SETUP_TOKEN }}
         run: |
           [[ -z $ADMIN_SETUP_TOKEN || $ADMIN_SETUP_TOKEN =~ ^[A-Za-z0-9_-]{24,}$ ]] || { echo "::error::Use a randomly generated URL-safe admin setup token of at least 24 characters."; exit 1; }
+      - name: Verify Supabase project authorization
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ steps.project.outputs.ref }}
+        run: |
+          status=$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code}' \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF") || status=000
+          if [[ $status != 200 ]]; then
+            case "$status" in
+              401|403|404) message="Supabase rejected project access (HTTP $status). Check SUPABASE_ACCESS_TOKEN and the account’s project permissions." ;;
+              *) message="Supabase management API could not verify the project (HTTP $status)." ;;
+            esac
+            echo "::error::$message"
+            printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - name: Link Supabase project
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PROJECT_REF: ${{ steps.project.outputs.ref }}
-        run: supabase link --project-ref "$PROJECT_REF"
+        shell: bash
+        run: |
+          log_file=$(mktemp)
+          trap 'rm -f "$log_file"' EXIT
+          if supabase link --project-ref "$PROJECT_REF" 2>&1 | tee "$log_file"; then
+            exit 0
+          fi
+          if grep -Eqi 'password authentication failed|invalid password|SASL|28P01' "$log_file"; then
+            message="Supabase rejected the database password. Check the SUPABASE_DB_PASSWORD repository secret."
+          elif grep -Eqi 'paused|inactive|restore' "$log_file"; then
+            message="The Supabase project is inactive or restoring. Resume it before deploying."
+          else
+            message="Supabase project authorization passed, but the CLI could not link the database. See the Link Supabase project step."
+          fi
+          echo "::error::$message"
+          printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
       - name: Apply database migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
