@@ -120,6 +120,17 @@ jobs:
           session=$(curl --retry 5 --retry-all-errors --fail --silent --show-error --max-time 15 \
             -H "Origin: $SITE_ORIGIN" "$PROJECT_URL/functions/v1/concept-api/api/session")
           jq -e 'keys == ["actor"] and .actor == null' <<<"$session" >/dev/null
+          probe=$(mktemp)
+          trap 'rm -f "$probe"' EXIT
+          body=$(jq -nc --arg email "deployment-probe-$GITHUB_RUN_ID@example.invalid" \
+            '{email: $email, password: "invalid-probe-password"}')
+          status=$(curl --silent --show-error --max-time 15 --output "$probe" --write-out '%{http_code}' \
+            -H "Origin: $SITE_ORIGIN" -H 'Content-Type: application/json' --data "$body" \
+            "$PROJECT_URL/functions/v1/concept-api/api/login")
+          if [[ $status != 401 ]] || ! jq -e '.error == "Invalid email or password."' "$probe" >/dev/null; then
+            echo "::error::Hosted sign-in did not handle the JSON credential probe (HTTP $status)."
+            exit 1
+          fi
       - name: Remove the retired web setup secret
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

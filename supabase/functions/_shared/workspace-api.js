@@ -84,18 +84,20 @@ async function readBody(req, siteOrigin) {
       throw new RequestError('Submit this request from the workspace.', 403);
     }
   }
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   let size = 0;
-  const parts = [];
-  for await (const part of req) {
-    size += part.length;
-    if (size > 32000) throw new RequestError('Request is too large.', 413);
-    parts.push(part);
-  }
+  let text = '';
   try {
-    const body = JSON.parse(Buffer.concat(parts).toString());
+    for await (const part of req) {
+      size += part.byteLength;
+      if (size > 32000) throw new RequestError('Request is too large.', 413);
+      text += decoder.decode(part, { stream: true });
+    }
+    const body = JSON.parse(text + decoder.decode());
     if (!body || Array.isArray(body) || typeof body !== 'object') throw new Error();
     return body;
-  } catch {
+  } catch (error) {
+    if (error instanceof RequestError) throw error;
     throw new RequestError('Send a valid JSON object.');
   }
 }

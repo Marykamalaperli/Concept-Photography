@@ -281,3 +281,40 @@ test('hosted admin access requires the linked Supabase identity', async (t) => {
   assert.deepEqual(await call('GET', 'session'), { actor: null });
   await assert.rejects(call('GET', 'state'), { status: 401 });
 });
+
+test('sign-in parses streamed UTF-8 JSON with no global Buffer', async (t) => {
+  const db = openStore(new DatabaseSync(':memory:'));
+  t.after(() => db.close());
+  const email = 'edge@example.invalid';
+  const password = 'Example test 🔐 passphrase';
+  db.prepare(`
+    INSERT INTO employees (name, role, email, color, password_hash)
+    VALUES ('Edge Employee', 'Photographer', ?, 'peach', ?)
+  `).run(email, await hashPassword(password));
+
+  const api = createApi(sqliteAdapter(db));
+  const bytes = new TextEncoder().encode(JSON.stringify({ email, password }));
+  const split = bytes.indexOf(0xF0) + 1;
+  let cookie;
+  async function login(chunks) {
+    const req = {
+      method: 'POST',
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: { 'content-type': 'application/json' },
+      async *[Symbol.asyncIterator]() { yield* chunks; },
+    };
+    return api(req, { setHeader(_name, value) { cookie = value; } }, '/api/login');
+  }
+
+  // The hosted Edge Runtime supplies byte chunks without Node's Buffer global.
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Buffer');
+  delete globalThis.Buffer;
+  try {
+    assert.deepEqual(await login([bytes.slice(0, split), bytes.slice(split)]), { ok: true });
+    assert.match(cookie, /concept_session=/);
+    await assert.rejects(login([new Uint8Array([0xFF])]), { status: 400 });
+    await assert.rejects(login([new Uint8Array(32001)]), { status: 413 });
+  } finally {
+    Object.defineProperty(globalThis, 'Buffer', descriptor);
+  }
+});
