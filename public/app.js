@@ -1,3 +1,5 @@
+import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
+
 const main = document.querySelector('main');
 const sidebar = document.querySelector('#sidebar');
 const topbar = document.querySelector('#topbar');
@@ -27,7 +29,7 @@ const categories = {
   Other: ['briefcase', 'neutral'],
 };
 
-let state = { employees: [], tasks: [], sessions: [], attendance: [], reminders: [] };
+let state = { office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [] };
 let snapshot;
 let actorId = Number(localStorage.getItem('concept-employee'));
 let page = currentPage();
@@ -40,6 +42,13 @@ let loading = false;
 let refreshVersion = 0;
 let displayedDate;
 let toastTimer;
+let clockTarget = '';
+let permissionGranted = false;
+let readingLocation = false;
+let watcher;
+let lastFix;
+let observing = false;
+let shownShootIds = '';
 
 const e = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -48,6 +57,10 @@ const icon = (name) => `<i class="icon" aria-hidden="true" style="--icon:url('./
 const tile = (name, color) => `<span class="tile ${color}">${icon(name)}</span>`;
 const employee = (id) => state.employees.find((person) => person.id === id);
 const actor = () => employee(actorId);
+const manager = () => Boolean(actor()?.is_admin);
+const latestShift = () => state.attendance.find((shift) => shift.employee_id === actorId);
+const checkInShoots = () => availableShoots(state.tasks, actorId, Date.now());
+const shootIds = () => checkInShoots().map((task) => task.id).join(',');
 const reminders = () => state.reminders.filter((notice) => notice.employee_id === actorId);
 const shiftFor = (id) => state.attendance.find((shift) => shift.employee_id === id && shift.clock_out === null);
 const sessionsFor = (task) => state.sessions.filter((session) => session.task_id === task.id);
@@ -152,19 +165,40 @@ function scheduleRow(task) {
 
 function clockCard() {
   const shift = shiftFor(actorId);
-  const last = shift || state.attendance.find((entry) => entry.employee_id === actorId);
+  const last = latestShift();
   const shiftTime = shift?.clock_in ?? last?.clock_out;
+  const boundSite = shift?.site ? JSON.parse(shift.site) : state.office;
+  const sites = checkInShoots();
+  if (clockTarget && !sites.some((task) => String(task.id) === clockTarget)) clockTarget = '';
+  if (!clockTarget && !state.office && sites.length) clockTarget = String(sites[0].id);
+  const canClock = Boolean(shift ? boundSite : state.office || sites.length);
   return `<section class="panel">
-    <div class="panel-head"><div><h2>Time Clock</h2><p>${actor() ? e(actor().name) : 'Select an employee'}</p></div>${shift ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral')}</div>
+    <div class="panel-head">
+      <div><h2>Time Clock</h2><p>${actor() ? e(actor().name) : 'Select an employee'}</p></div>
+      ${shift ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral')}
+    </div>
     <div class="clock-body">
       <div class="clock-face" id="clock-face"></div>
       <div class="clock-date" id="clock-date"></div>
-      ${actor() ? actionButton(shift ? 'Clock Out' : 'Clock In', 'clock', shift ? 'log-out' : 'log-in') : actionButton('Add Employee', 'new-employee', 'user-plus')}
-      <p class="location-note">${icon('map-pin')} Location is captured at clock-in and clock-out</p>
+      ${!shift && sites.length ? `<label class="clock-site">Check-in site
+        <select id="clock-target">
+          ${state.office ? `<option value="">${e(state.office.name)}</option>` : ''}
+          ${sites.map((task) => `<option value="${task.id}" ${String(task.id) === clockTarget ? 'selected' : ''}>${e(task.title)} · ${e(task.location)}</option>`).join('')}
+        </select></label>` : ''}
+      ${(shift || !sites.length) && boundSite ? `<p class="bound-site">${icon('map-pin')}${e(boundSite.name)}</p>` : ''}
+      ${canClock ? actionButton(shift ? 'Clock Out' : 'Clock In', 'clock', shift ? 'log-out' : 'log-in') : ''}
+      ${!actor() ? actionButton('Add Employee', 'new-employee', 'user-plus') : ''}
+      <p class="location-note">${icon('map-pin')}${canClock ? `GPS must verify you are within ${fenceRadius} m of the work site` : 'No check-in site is available. Ask your studio manager.'}</p>
+      <p class="location-watch" id="location-watch" role="status" hidden></p>
+      ${(shift?.site || last?.resume_pending) && !permissionGranted ? actionButton('Enable location tracking', 'enable-location', 'locate-fixed', 'secondary') : ''}
     </div>
     ${last ? `<div class="clock-summary">
       <div><small>${shift ? 'Clocked in at' : 'Last clock-out'}</small><strong>${shortDate.format(shiftTime)} · ${time(shiftTime)}</strong></div>
       <div><small>${shift ? 'Current shift' : 'Last shift'}</small><strong ${shift ? `data-shift-start="${shift.clock_in}"` : ''}>${duration((last.clock_out ?? Date.now()) - last.clock_in)}</strong></div>
+    </div>` : ''}
+    ${manager() || last?.resume_pending ? `<div class="clock-tools">
+      ${manager() ? actionButton('Office Location', 'office-location', 'settings', 'secondary') : ''}
+      ${last?.resume_pending ? actionButton('Cancel auto return', 'cancel-return', 'x', 'secondary') : ''}
     </div>` : ''}
   </section>`;
 }
@@ -186,10 +220,11 @@ function attendanceTable(records, full = false) {
     <th scope="col">${full ? 'Time worked' : 'Status'}</th>
   </tr></thead><tbody>${records.map((shift) => {
     const person = employee(shift.employee_id);
+    const siteName = shift.site ? JSON.parse(shift.site).name : '';
     return `<tr><td><div class="inline">${avatar(person)}<div><strong>${e(person?.name)}</strong><small>${e(person?.role)}</small></div></div></td>
-      <td>${time(shift.clock_in)}<small>${shortDate.format(shift.clock_in)}</small></td>
-      <td>${shift.clock_out ? `${time(shift.clock_out)}<small>${shortDate.format(shift.clock_out)}</small>` : '—'}</td>
-      <td>${locationCell(shift.in_location)}</td>${full ? `<td>${locationCell(shift.out_location)}</td>` : ''}
+      <td>${time(shift.clock_in)}<small>${shortDate.format(shift.clock_in)}${shift.in_reason === 'geofence' ? ' · Auto return' : ''}</small></td>
+      <td>${shift.clock_out ? `${time(shift.clock_out)}<small>${shortDate.format(shift.clock_out)}${shift.out_reason === 'geofence' ? ' · Left site' : ''}</small>` : '—'}</td>
+      <td>${siteName ? `<strong>${e(siteName)}</strong><br>` : ''}${locationCell(shift.in_location)}</td>${full ? `<td>${locationCell(shift.out_location)}</td>` : ''}
       <td>${full && shift.clock_out ? duration(shift.clock_out - shift.clock_in) : shift.clock_out ? tag('Clocked out', 'neutral') : tag('Clocked in', 'sage')}</td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
@@ -264,6 +299,28 @@ function schedulePage() {
 }
 
 function taskControls(task) {
+  const site = shootSite(task);
+  if (task.category === 'Photo shoot' && !site && !task.completed_at) {
+    return '<p class="task-location-note">The studio manager needs to set the shoot location before check-in.</p>';
+  }
+  if (site && task.employee_id === actorId) {
+    const shift = shiftFor(actorId);
+    const atShoot = shift?.site && JSON.parse(shift.site).taskId === task.id;
+    const end = atShoot
+      ? `<button type="button" class="btn primary" data-action="clock" data-id="${task.id}">${icon('log-out')}Clock Out of Shoot</button>`
+      : '';
+    if (task.completed_at) return end;
+    if (atShoot) {
+      return end + `<button type="button" class="btn secondary" data-action="task-timer" data-value="complete" data-id="${task.id}">${icon('check')}Mark complete</button>`;
+    }
+    if (!shift && checkInShoots().some((item) => item.id === task.id)) {
+      return `<button type="button" class="btn primary" data-action="clock" data-id="${task.id}">${icon('log-in')}Clock In at Shoot</button>`;
+    }
+    const outsideWindow = Date.now() < task.start_at - 30 * 60_000
+      ? 'Shoot check-in opens 30 minutes before the scheduled start.'
+      : 'The scheduled check-in window has ended.';
+    return `<p class="task-location-note">${shift ? 'Clock out of your current site before starting this shoot.' : outsideWindow}</p>`;
+  }
   if (task.completed_at) return '';
   if (task.employee_id !== actorId) return `<button type="button" class="btn secondary" data-action="switch" data-id="${task.employee_id}" data-value="${task.id}">${icon('user-round')}Switch to assignee</button>`;
   const active = activeSession(task);
@@ -274,18 +331,22 @@ function taskControls(task) {
 }
 
 function taskCard(task, inDialog = false) {
+  const site = shootSite(task);
+  const editSite = manager() && task.category === 'Photo shoot'
+    ? `<button type="button" class="btn secondary" data-action="shoot-location" data-id="${task.id}">${icon('map-pin')}${site ? 'Edit Shoot Location' : 'Set Shoot Location'}</button>`
+    : '';
   return `<article class="${inDialog ? '' : 'panel task-card'}">
     ${inDialog ? '' : `<div class="panel-head"><div><h2>${e(task.title)}</h2><p>${e(task.category)}</p></div>${taskStatus(task)}</div>`}
     <div class="task-details">
       <div class="inline">${icon('user-round')}${e(employee(task.employee_id)?.name)}</div>
       <div class="inline">${icon('calendar-days')}${shortDate.format(task.start_at)} · ${time(task.start_at)} IST</div>
-      <div class="inline">${icon('map-pin')}${e(task.location)}</div>
+      <div class="inline">${icon('map-pin')}${e(task.location)}${site ? ` · ${fenceRadius} m GPS boundary` : ''}</div>
     </div>
     <div class="task-times">
       <div><small>Estimated duration</small><strong>${duration(task.estimate * 60000)}</strong></div>
       <div><small>Time tracked</small><strong ${activeSession(task) ? `data-elapsed="${task.id}"` : ''}>${elapsed(task)}</strong></div>
     </div>
-    <div class="card-actions">${taskControls(task)}</div>
+    <div class="card-actions">${taskControls(task)}${editSite}</div>
   </article>`;
 }
 
@@ -327,16 +388,23 @@ const pages = { dashboard, team: teamPage, schedule: schedulePage, tasks: tasksP
 
 function render() {
   displayedDate = today();
+  shownShootIds = shootIds();
   renderChrome();
   main.innerHTML = pages[page]();
+  if (dialog.open && dialog.dataset.taskId) {
+    const task = state.tasks.find((item) => item.id === Number(dialog.dataset.taskId));
+    if (task) taskDialog(task);
+  }
+  updateTracking();
   tick();
 }
 
 function tick() {
-  if (snapshot && displayedDate !== today()) {
+  if (snapshot && (displayedDate !== today() || shownShootIds !== shootIds())) {
     render();
     return;
   }
+  processLocation();
   const shiftTime = document.querySelector('[data-shift-start]');
   if (shiftTime) shiftTime.textContent = duration(Date.now() - Number(shiftTime.dataset.shiftStart));
   const face = document.querySelector('#clock-face');
@@ -414,12 +482,14 @@ async function refresh({ force = false, notify = true } = {}) {
 
 function setActor(id) {
   actorId = id;
+  clockTarget = '';
   localStorage.setItem('concept-employee', String(id));
   if (dialog.open) dialog.close();
   render();
 }
 
 function openDialog(title, subtitle, body) {
+  delete dialog.dataset.taskId;
   dialog.innerHTML = `<div class="dialog-inner"><div class="panel-head">
     <div><h2 id="dialog-title">${title}</h2><p>${subtitle}</p></div>
     <button type="button" class="icon-button" aria-label="Close dialog" data-action="close">${icon('x')}</button>
@@ -440,24 +510,60 @@ function employeeForm() {
     <label class="full">Email<input name="email" type="email" required maxlength="254" placeholder="name@example.com"></label>`, 'Add Employee'));
 }
 
+function coordinateFields(site = {}) {
+  return `<label>Latitude<input name="latitude" type="number" min="-90" max="90" step="any" required value="${e(site.latitude)}"></label>
+    <label>Longitude<input name="longitude" type="number" min="-180" max="180" step="any" required value="${e(site.longitude)}"></label>`;
+}
+
+function locationForm(task) {
+  const site = task ? shootSite(task) : state.office;
+  const field = task ? 'location' : 'name';
+  const label = task ? 'Shoot location' : 'Office name';
+  openDialog(task ? 'Shoot Location' : 'Office Location', `Set the center of the ${fenceRadius} m clock-in and clock-out boundary.`,
+    entryForm(task ? 'task-site' : 'office', `
+      ${task ? `<input type="hidden" name="taskId" value="${task.id}">` : ''}
+      <label class="full">${label}<input name="${field}" required maxlength="100" value="${e(task?.location ?? site?.name)}"></label>
+      ${coordinateFields(site ?? {})}
+      <div class="full">${actionButton('Use my current location', 'fill-location', 'locate-fixed', 'secondary')}</div>
+    `, 'Save Location'));
+}
+
 function taskForm() {
   if (!state.employees.length) {
     employeeForm();
     showToast('Add an employee before creating a task.');
     return;
   }
+  const options = Object.keys(categories).filter((category) => manager() || category !== 'Photo shoot');
   openDialog('New Task', 'The assignee receives a reminder before the scheduled start.', entryForm('tasks', `
     <label class="full">Task title<input name="title" required maxlength="100" placeholder="e.g. Product photography session"></label>
     <label>Assigned to<select name="employeeId" required>${personOptions(actorId)}</select></label>
-    <label>Category<select name="category" required>${Object.keys(categories).map((category) => `<option>${category}</option>`).join('')}</select></label>
+    <label>Category<select name="category" required>${options.map((category) => `<option>${category}</option>`).join('')}</select></label>
     <label>Start date<input type="date" name="startDate" required value="${today()}"></label>
     <label>Start time (IST)<input type="time" name="startTime" required></label>
     <label>Estimate (minutes)<input type="number" name="estimate" required min="1" max="1440" value="60"></label>
-    <label>Work location<input name="location" required maxlength="100" placeholder="e.g. Studio A"></label>`, 'Create Task'));
+    <label>Work location<input name="location" required maxlength="100" placeholder="e.g. Studio A"></label>
+    ${manager() ? `<fieldset class="full coordinate-fields"><legend>Shoot check-in location</legend>
+      ${coordinateFields()}
+      <div class="full">${actionButton('Use my current location', 'fill-location', 'locate-fixed', 'secondary')}</div>
+    </fieldset>` : ''}`, 'Create Task'));
 }
 
 function taskDialog(task) {
   openDialog(e(task.title), e(task.category), taskCard(task, true));
+  dialog.dataset.taskId = task.id;
+}
+
+const locationOptions = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 };
+
+function toFix({ coords, timestamp }) {
+  return { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, capturedAt: timestamp };
+}
+
+function locationError(error) {
+  return error.code === 1
+    ? 'Location permission was denied. Allow location access to record attendance.'
+    : 'Your location was unavailable. Check your device location settings and try again.';
 }
 
 function getLocation() {
@@ -466,18 +572,105 @@ function getLocation() {
       reject(new Error('Open the workspace over HTTPS or localhost to use location.'));
       return;
     }
-    navigator.geolocation.getCurrentPosition(({ coords }) => resolve({
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-      accuracy: coords.accuracy,
-    }), (error) => {
-      const message = error.code === 1
-        ? 'Location permission was denied. Allow location access to record attendance.'
-        : 'Your location was unavailable. Check your device location settings and try again.';
-      reject(new Error(message));
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    readingLocation = true;
+    stopTracking();
+    navigator.geolocation.getCurrentPosition((position) => {
+      readingLocation = false;
+      permissionGranted = true;
+      resolve(toFix(position));
+    }, (error) => {
+      readingLocation = false;
+      if (error.code === 1) permissionGranted = false;
+      reject(new Error(locationError(error)));
+    }, locationOptions);
   });
 }
+
+function trackingTarget() {
+  const latest = latestShift();
+  const current = latest?.clock_out === null;
+  const site = current
+    ? (latest.site ? JSON.parse(latest.site) : null)
+    : returnSite(latest, state.office, state.tasks, actorId, Date.now());
+  return site ? { site, current, shiftId: latest.id } : null;
+}
+
+function setWatchStatus(message) {
+  const element = document.querySelector('#location-watch');
+  if (element && element.textContent !== message) element.textContent = message;
+  if (element) element.hidden = !message;
+}
+
+function stopTracking() {
+  if (watcher) navigator.geolocation.clearWatch(watcher.id);
+  watcher = undefined;
+  lastFix = undefined;
+}
+
+function updateTracking() {
+  if (readingLocation) return;
+  const target = trackingTarget();
+  const shouldWatch = target && permissionGranted && window.isSecureContext && navigator.geolocation;
+  if (watcher && (!shouldWatch || watcher.employeeId !== actorId)) stopTracking();
+  if (!shouldWatch) {
+    const message = target ? 'Enable location tracking to record departures and returns.'
+      : latestShift()?.resume_pending ? 'Auto return is unavailable for this site. You can clock in at an eligible site.'
+      : '';
+    setWatchStatus(message);
+    return;
+  }
+  if (!watcher) {
+    const watching = { employeeId: actorId };
+    watcher = watching;
+    watching.id = navigator.geolocation.watchPosition((position) => {
+      if (watcher !== watching) return;
+      lastFix = { location: toFix(position), employeeId: watching.employeeId };
+      processLocation();
+    }, (error) => {
+      if (watcher !== watching) return;
+      if (error.code === 1) {
+        permissionGranted = false;
+        render();
+      }
+      setWatchStatus(locationError(error));
+    }, locationOptions);
+  }
+  setWatchStatus(target.current ? 'Location tracking is on. Keep this workspace open for automatic clock-out.'
+    : 'Clocked out after leaving. Keep this workspace open to clock back in on return.');
+}
+
+async function processLocation() {
+  if (!lastFix || lastFix.employeeId !== actorId || pending || observing) return;
+  const target = trackingTarget();
+  const { location, employeeId } = lastFix;
+  lastFix = undefined;
+  if (!target || Date.now() - location.capturedAt > 30_000) return;
+  if (presenceAt(location, target.site) !== (target.current ? 'outside' : 'inside')) return;
+  observing = true;
+  try {
+    const shift = await request('attendance', { employeeId, shiftId: target.shiftId, action: 'observe', location });
+    await refresh({ force: true });
+    if (shift && actorId === employeeId) {
+      showToast(target.current ? `Clocked out automatically after leaving ${target.site.name}.`
+        : `Clocked back in automatically at ${target.site.name}.`);
+    }
+  } catch (error) {
+    setWatchStatus(error.message);
+  } finally {
+    observing = false;
+  }
+}
+
+navigator.permissions?.query({ name: 'geolocation' }).then((permission) => {
+  const syncPermission = () => {
+    const granted = permission.state === 'granted';
+    if (granted === permissionGranted) return;
+    permissionGranted = granted;
+    if (snapshot) render();
+  };
+  permission.addEventListener('change', syncPermission);
+  syncPermission();
+}).catch(() => {});
 
 async function mutate(button, callback) {
   if (pending) return;
@@ -490,6 +683,7 @@ async function mutate(button, callback) {
   } finally {
     pending = false;
     button.disabled = false;
+    updateTracking();
   }
 }
 
@@ -525,18 +719,46 @@ document.addEventListener('click', (event) => {
     render();
     main.querySelector(`[data-action="${action}"][aria-pressed="true"]`)?.focus();
   }
+  if (action === 'office-location' && manager()) locationForm();
+  if (action === 'shoot-location' && manager() && task) locationForm(task);
+  if (action === 'fill-location') {
+    const form = button.closest('form');
+    mutate(button, async () => {
+      const location = await getLocation();
+      if (location.accuracy > 50) throw new Error('GPS accuracy is too low to set a work site. Move outdoors and try again.');
+      form.elements.latitude.value = location.latitude;
+      form.elements.longitude.value = location.longitude;
+    });
+  }
+  if (action === 'enable-location') {
+    mutate(button, async () => {
+      await getLocation();
+      render();
+    });
+  }
+  if (action === 'cancel-return') {
+    mutate(button, async () => {
+      await request('attendance', { employeeId: actorId, shiftId: latestShift()?.id, action: 'cancel-return' });
+      await refresh({ force: true });
+      showToast('Automatic return cancelled.');
+    });
+  }
   if (action === 'clock') {
     const employeeId = actorId;
-    const clockAction = shiftFor(employeeId) ? 'out' : 'in';
+    const shift = shiftFor(employeeId);
+    const clockAction = shift ? 'out' : 'in';
+    const taskId = id ? Number(id) : (clockTarget ? Number(clockTarget) : null);
     mutate(button, async () => {
+      const label = button.lastChild.textContent;
       button.lastChild.textContent = 'Getting location…';
       try {
         const location = await getLocation();
-        await request('attendance', { employeeId, action: clockAction, location });
+        if (employeeId !== actorId) throw new Error('Employee changed. Try again.');
+        await request('attendance', { employeeId, action: clockAction, location, taskId, shiftId: shift?.id });
         await refresh({ force: true });
         showToast(`Clocked ${clockAction}. Time and location recorded.`);
       } finally {
-        button.lastChild.textContent = clockAction === 'out' ? 'Clock Out' : 'Clock In';
+        button.lastChild.textContent = label;
       }
     });
   }
@@ -544,7 +766,6 @@ document.addEventListener('click', (event) => {
     mutate(button, async () => {
       await request('task-action', { employeeId: actorId, taskId: task.id, action: value });
       await refresh({ force: true });
-      if (dialog.open) taskDialog(state.tasks.find((item) => item.id === task.id));
       showToast({ start: 'Task timer started.', pause: 'Task timer paused.', complete: 'Task marked complete.' }[value]);
     });
   }
@@ -568,6 +789,15 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('change', (event) => {
+  if (event.target.id === 'clock-target') clockTarget = event.target.value;
+  if (event.target.name === 'category') {
+    const coordinates = event.target.form.querySelector('.coordinate-fields');
+    if (coordinates) {
+      const isShoot = event.target.value === 'Photo shoot';
+      coordinates.hidden = !isShoot;
+      coordinates.disabled = !isShoot;
+    }
+  }
   if (event.target.id === 'actor') setActor(Number(event.target.value));
   if (event.target.id === 'schedule-employee') {
     employeeFilter = event.target.value;
@@ -582,7 +812,7 @@ dialog.addEventListener('submit', (event) => {
   const form = event.target;
   const kind = form.dataset.form;
   const errorNote = form.querySelector('.form-error');
-  const data = Object.fromEntries(new FormData(form));
+  const data = { ...Object.fromEntries(new FormData(form)), actorId };
   if (kind === 'tasks') data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
   errorNote.hidden = true;
   mutate(event.submitter, async () => {
@@ -591,7 +821,7 @@ dialog.addEventListener('submit', (event) => {
       dialog.close();
       if (kind === 'tasks') window.location.hash = '#tasks';
       await refresh({ force: true });
-      showToast(kind === 'tasks' ? 'Task scheduled.' : 'Employee added.');
+      showToast({ tasks: 'Task scheduled.', employees: 'Employee added.', office: 'Office location saved.', 'task-site': 'Shoot location saved.' }[kind]);
     } catch (error) {
       errorNote.textContent = error.message;
       errorNote.hidden = false;

@@ -37,6 +37,37 @@ export function openStore(db, { seed = process.env.SEED_DEMO !== '0', now = Date
       throw error;
     }
   }
+  if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        ALTER TABLE employees ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0;
+        UPDATE employees SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM employees);
+        ALTER TABLE tasks ADD COLUMN site_latitude REAL;
+        ALTER TABLE tasks ADD COLUMN site_longitude REAL;
+        ALTER TABLE attendance ADD COLUMN site TEXT;
+        ALTER TABLE attendance ADD COLUMN in_reason TEXT NOT NULL DEFAULT 'manual';
+        ALTER TABLE attendance ADD COLUMN out_reason TEXT;
+        ALTER TABLE attendance ADD COLUMN resume_pending INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE office (
+          id INTEGER PRIMARY KEY CHECK (id = 1), name TEXT NOT NULL,
+          latitude REAL NOT NULL, longitude REAL NOT NULL
+        ) STRICT;
+      `);
+      if (seed && db.prepare("SELECT id FROM employees WHERE email = 'alex.morgan@example.com' AND is_admin = 1").get()) {
+        // Demo coordinates only. Other workspaces need their office configured by the manager.
+        db.exec(`
+          INSERT INTO office VALUES (1, 'Main studio · Sample', 17.385, 78.4867);
+          UPDATE tasks SET site_latitude = 17.3868, site_longitude = 78.4867
+          WHERE category = 'Photo shoot' AND title IN ('Studio product shoot', 'Portrait session');
+        `);
+      }
+      db.exec('PRAGMA user_version = 2; COMMIT;');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   refreshReminders(db, now);
   return db;
 }

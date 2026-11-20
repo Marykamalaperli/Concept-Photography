@@ -12,7 +12,7 @@ await writeFile(new URL('index.html', output), entry.replace('</head>', '  <meta
 await writeFile(new URL('.nojekyll', output), '');
 
 await Promise.all([
-  ...['app.js', 'styles.css', 'studio.webp', 'pages-demo.js'].map((asset) =>
+  ...['app.js', 'styles.css', 'studio.webp', 'pages-demo.js', 'attendance-policy.js'].map((asset) =>
     cp(new URL(asset, publicFiles), new URL(asset, output))),
   cp(new URL('lucide-static/icons/', packages), new URL('icons/', output), { recursive: true }),
   cp(new URL('lucide-static/LICENSE', packages), new URL('lucide-LICENSE.txt', output)),
@@ -29,6 +29,7 @@ const db = openStore(new DatabaseSync(':memory:'), { seed: true, now: attendance
 const fixture = {
   anchor,
   attendanceAnchor,
+  office: db.prepare('SELECT name, latitude, longitude FROM office WHERE id = 1').get(),
   employees: db.prepare('SELECT * FROM employees ORDER BY id').all(),
   tasks: db.prepare('SELECT * FROM tasks ORDER BY start_at, id').all(),
   sessions: db.prepare('SELECT * FROM task_sessions ORDER BY start_at DESC').all(),

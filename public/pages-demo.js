@@ -1,3 +1,5 @@
+import { attendanceTransition, requireManager, shootSite, siteCoordinates } from './attendance-policy.js';
+
 const key = 'concept-pages-demo-v1';
 const serializedFixture = new URL('demo-data.json', import.meta.url);
 const studioDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -8,6 +10,7 @@ function newDemo(fixture, now) {
   const taskOffset = midnight - fixture.anchor;
   const attendanceOffset = now - fixture.attendanceAnchor;
   return {
+    office: fixture.office,
     employees: fixture.employees,
     tasks: fixture.tasks.map((task) => ({
       ...task,
@@ -58,7 +61,26 @@ function update(state, path, body, now) {
     }
     const colors = ['peach', 'lavender', 'sage', 'sand', 'rose'];
     const color = colors[state.employees.length % colors.length];
-    return addRow(state.employees, { name, role, email, color });
+    return addRow(state.employees, { name, role, email, color, is_admin: Number(!state.employees.length) });
+  }
+
+  if (path === 'office' || path === 'task-site') {
+    requireManager(state.employees.find((person) => person.id === Number(body.actorId)));
+    const coords = siteCoordinates(body);
+    if (path === 'office') {
+      const name = body.name.trim();
+      if (!name) throw new Error('Enter the office name.');
+      state.office = { name, ...coords };
+      return state.office;
+    }
+    const task = state.tasks.find((item) => item.id === Number(body.taskId) && item.category === 'Photo shoot');
+    if (!task) throw new Error('Photo shoot not found.');
+    const name = body.location.trim();
+    if (!name) throw new Error('Enter the shoot location.');
+    task.location = name;
+    task.site_latitude = coords.latitude;
+    task.site_longitude = coords.longitude;
+    return task;
   }
 
   const employeeId = Number(body.employeeId);
@@ -72,34 +94,22 @@ function update(state, path, body, now) {
     if (!title || !location || !Number.isInteger(estimate) || estimate < 1 || estimate > 1440 || !Number.isFinite(start)) {
       throw new Error('Enter a valid task title, location, estimate, and start time.');
     }
+    let site = null;
+    if (body.category === 'Photo shoot') {
+      requireManager(state.employees.find((person) => person.id === Number(body.actorId)));
+      site = siteCoordinates(body);
+    }
     const task = addRow(state.tasks, {
       title, location, estimate, category: body.category, start_at: start,
       employee_id: employeeId, completed_at: null,
+      site_latitude: site?.latitude ?? null, site_longitude: site?.longitude ?? null,
     });
     state.tasks.sort((left, right) => left.start_at - right.start_at);
     return task;
   }
 
   if (path === 'attendance') {
-    const { latitude, longitude, accuracy } = body.location ?? {};
-    if (![latitude, longitude, accuracy].every(Number.isFinite)) {
-      throw new Error('A valid location is required to record attendance.');
-    }
-    const location = JSON.stringify({ latitude, longitude, accuracy });
-    const shift = state.attendance.find((entry) => entry.employee_id === employeeId && entry.clock_out === null);
-    if (body.action === 'in' && !shift) {
-      const entry = addRow(state.attendance, {
-        employee_id: employeeId, clock_in: now, in_location: location, clock_out: null, out_location: null,
-      });
-      state.attendance.sort((left, right) => right.clock_in - left.clock_in);
-      return entry;
-    }
-    if (body.action === 'out' && shift) {
-      shift.clock_out = now;
-      shift.out_location = location;
-      return shift;
-    }
-    throw new Error('The clock status changed. Refresh and try again.');
+    return recordAttendance(state, employeeId, body, now);
   }
 
   if (path === 'task-action') {
@@ -108,6 +118,11 @@ function update(state, path, body, now) {
     if (task.completed_at) throw new Error('This task is already complete.');
     const active = state.sessions.find((entry) => entry.employee_id === employeeId && entry.end_at === null);
     if (body.action === 'start') {
+      if (task.category === 'Photo shoot' && !shootSite(task)) throw new Error('Ask the studio manager to set the shoot location.');
+      const shift = state.attendance.find((entry) => entry.employee_id === employeeId && entry.clock_out === null);
+      if (shootSite(task) && (!shift?.site || JSON.parse(shift.site).taskId !== task.id)) {
+        throw new Error('Clock in at this shoot before tracking time.');
+      }
       if (active) throw new Error('Pause the running task before starting another.');
       return addRow(state.sessions, { task_id: task.id, employee_id: employeeId, start_at: now, end_at: null });
     }
@@ -132,12 +147,50 @@ function update(state, path, body, now) {
   throw new Error('This demo action is unavailable.');
 }
 
+function recordAttendance(state, employeeId, command, now) {
+  const latest = state.attendance.find((entry) => entry.employee_id === employeeId);
+  const change = attendanceTransition({ command, latest, office: state.office, tasks: state.tasks, employeeId, now });
+  if (!change) return null;
+  if (change.type === 'cancel') {
+    latest.resume_pending = 0;
+    return null;
+  }
+  if (change.type === 'close') {
+    latest.clock_out = now;
+    latest.out_location = JSON.stringify(change.location);
+    latest.out_reason = change.reason;
+    latest.resume_pending = Number(change.reason === 'geofence');
+    if (change.taskId) {
+      const active = state.sessions.find((session) => session.task_id === change.taskId && session.end_at === null);
+      if (active) active.end_at = now;
+    }
+    return latest;
+  }
+
+  if (latest) latest.resume_pending = 0;
+  const shift = addRow(state.attendance, {
+    employee_id: employeeId, clock_in: now, clock_out: null, site: JSON.stringify(change.site),
+    in_location: JSON.stringify(change.location), out_location: null, in_reason: change.reason, resume_pending: 0,
+  });
+  state.attendance.sort((left, right) => right.clock_in - left.clock_in || right.id - left.id);
+  if (change.site.taskId) {
+    const active = state.sessions.find((session) => session.employee_id === employeeId && session.end_at === null);
+    if (active) active.end_at = now;
+    addRow(state.sessions, { task_id: change.site.taskId, employee_id: employeeId, start_at: now, end_at: null });
+  }
+  return shift;
+}
+
 async function run(path, body) {
   const snapshot = localStorage.getItem(key);
   const now = Date.now();
   let state;
   if (snapshot) {
     state = JSON.parse(snapshot);
+    if (!Object.hasOwn(state, 'office')) {
+      state.office = null;
+      if (state.employees.length) state.employees[0].is_admin = 1;
+    }
   } else {
     const response = await fetch(serializedFixture);
     if (!response.ok) throw new Error('Could not load the demo data.');

@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, refreshReminders } from './store.js';
+import { attendanceTransition, requireManager, shootSite, siteCoordinates } from './public/attendance-policy.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const database = process.env.DATABASE_PATH || resolve(root, 'data/workforce.sqlite');
@@ -39,13 +40,47 @@ function getTask(id) {
   return task;
 }
 
-function parseLocation(value) {
-  const { latitude, longitude, accuracy } = value ?? {};
-  if (![latitude, longitude, accuracy].every(Number.isFinite) ||
-      Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || accuracy < 0) {
-    throw new RequestError('A valid location is required to record attendance.');
+function officeSite() {
+  return db.prepare('SELECT name, latitude, longitude FROM office WHERE id = 1').get() ?? null;
+}
+
+function recordAttendance(employeeId, command, now) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const latest = db.prepare('SELECT * FROM attendance WHERE employee_id = ? ORDER BY clock_in DESC, id DESC LIMIT 1').get(employeeId);
+    const tasks = db.prepare("SELECT * FROM tasks WHERE employee_id = ? AND category = 'Photo shoot'").all(employeeId);
+    const change = attendanceTransition({ command, latest, office: officeSite(), tasks, employeeId, now });
+    let shift = null;
+    if (change?.type === 'open') {
+      db.prepare('UPDATE attendance SET resume_pending = 0 WHERE employee_id = ? AND resume_pending = 1').run(employeeId);
+      shift = db.prepare(`
+        INSERT INTO attendance (employee_id, clock_in, in_location, site, in_reason)
+        VALUES (?, ?, ?, ?, ?) RETURNING *
+      `).get(employeeId, now, JSON.stringify(change.location), JSON.stringify(change.site), change.reason);
+      if (change.site.taskId) {
+        db.prepare('UPDATE task_sessions SET end_at = ? WHERE employee_id = ? AND end_at IS NULL').run(now, employeeId);
+        db.prepare('INSERT INTO task_sessions (task_id, employee_id, start_at) VALUES (?, ?, ?)')
+          .run(change.site.taskId, employeeId, now);
+      }
+    }
+    if (change?.type === 'close') {
+      shift = db.prepare(`
+        UPDATE attendance SET clock_out = ?, out_location = ?, out_reason = ?, resume_pending = ? WHERE id = ? RETURNING *
+      `).get(now, JSON.stringify(change.location), change.reason, Number(change.reason === 'geofence'), change.shiftId);
+      if (change.taskId) {
+        db.prepare('UPDATE task_sessions SET end_at = ? WHERE task_id = ? AND employee_id = ? AND end_at IS NULL')
+          .run(now, change.taskId, employeeId);
+      }
+    }
+    if (change?.type === 'cancel') {
+      db.prepare('UPDATE attendance SET resume_pending = 0 WHERE id = ?').run(change.shiftId);
+    }
+    db.exec('COMMIT');
+    return shift;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
-  return JSON.stringify({ latitude, longitude, accuracy });
 }
 
 async function readBody(req) {
@@ -68,10 +103,11 @@ async function readBody(req) {
 function overview() {
   refreshReminders(db);
   return {
+    office: officeSite(),
     employees: db.prepare('SELECT * FROM employees ORDER BY id').all(),
     tasks: db.prepare('SELECT * FROM tasks ORDER BY start_at, id').all(),
     sessions: db.prepare('SELECT * FROM task_sessions ORDER BY start_at DESC').all(),
-    attendance: db.prepare('SELECT * FROM attendance ORDER BY clock_in DESC').all(),
+    attendance: db.prepare('SELECT * FROM attendance ORDER BY clock_in DESC, id DESC').all(),
     reminders: db.prepare('SELECT reminders.*, tasks.title, tasks.start_at FROM reminders JOIN tasks ON tasks.id = reminders.task_id ORDER BY sent_at DESC').all(),
   };
 }
@@ -95,8 +131,31 @@ async function api(req, path) {
     }
     const colors = ['peach', 'lavender', 'sage', 'sand', 'rose'];
     const count = db.prepare('SELECT COUNT(*) AS total FROM employees').get().total;
-    return db.prepare('INSERT INTO employees (name, role, email, color) VALUES (?, ?, ?, ?) RETURNING *')
-      .get(name, role, email, colors[count % colors.length]);
+    return db.prepare(`
+      INSERT INTO employees (name, role, email, color, is_admin)
+      VALUES (?, ?, ?, ?, NOT EXISTS (SELECT 1 FROM employees)) RETURNING *
+    `).get(name, role, email, colors[count % colors.length]);
+  }
+
+  if (path === '/api/office') {
+    requireManager(getEmployee(body.actorId));
+    const name = requiredText(body.name, 'office name');
+    const { latitude, longitude } = siteCoordinates(body);
+    return db.prepare(`
+      INSERT INTO office VALUES (1, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET name = excluded.name, latitude = excluded.latitude, longitude = excluded.longitude
+      RETURNING name, latitude, longitude
+    `).get(name, latitude, longitude);
+  }
+
+  if (path === '/api/task-site') {
+    requireManager(getEmployee(body.actorId));
+    const task = getTask(body.taskId);
+    if (task.category !== 'Photo shoot') throw new RequestError('Only photo shoots have an assigned shoot location.');
+    const { latitude, longitude } = siteCoordinates(body);
+    const name = requiredText(body.location, 'shoot location');
+    return db.prepare('UPDATE tasks SET location = ?, site_latitude = ?, site_longitude = ? WHERE id = ? RETURNING *')
+      .get(name, latitude, longitude, task.id);
   }
 
   if (path === '/api/tasks') {
@@ -113,27 +172,21 @@ async function api(req, path) {
     }
     const startAt = Date.parse(body.startAt);
     if (!Number.isFinite(startAt)) throw new RequestError('Choose a valid start date and time.');
+    let site = null;
+    if (category === 'Photo shoot') {
+      requireManager(getEmployee(body.actorId));
+      site = siteCoordinates(body);
+    }
     const task = db.prepare(`
-      INSERT INTO tasks (title, employee_id, start_at, estimate, location, category)
-      VALUES (?, ?, ?, ?, ?, ?) RETURNING *
-    `).get(title, employee.id, startAt, estimate, location, category);
+      INSERT INTO tasks (title, employee_id, start_at, estimate, location, category, site_latitude, site_longitude)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+    `).get(title, employee.id, startAt, estimate, location, category, site?.latitude ?? null, site?.longitude ?? null);
     refreshReminders(db, now);
     return task;
   }
 
   if (path === '/api/attendance') {
-    const employee = getEmployee(body.employeeId);
-    const location = parseLocation(body.location);
-    const current = db.prepare('SELECT * FROM attendance WHERE employee_id = ? AND clock_out IS NULL').get(employee.id);
-    if (body.action === 'in' && !current) {
-      return db.prepare('INSERT INTO attendance (employee_id, clock_in, in_location) VALUES (?, ?, ?) RETURNING *')
-        .get(employee.id, now, location);
-    }
-    if (body.action === 'out' && current) {
-      return db.prepare('UPDATE attendance SET clock_out = ?, out_location = ? WHERE id = ? RETURNING *')
-        .get(now, location, current.id);
-    }
-    throw new RequestError('The clock status changed. Refresh and try again.', 409);
+    return recordAttendance(getEmployee(body.employeeId).id, body, now);
   }
 
   if (path === '/api/task-action') {
@@ -144,6 +197,13 @@ async function api(req, path) {
     if (task.completed_at) throw new RequestError('This task is already complete.', 409);
     const active = db.prepare('SELECT * FROM task_sessions WHERE employee_id = ? AND end_at IS NULL').get(task.employee_id);
     if (body.action === 'start') {
+      if (task.category === 'Photo shoot' && !shootSite(task)) throw new RequestError('Ask the studio manager to set the shoot location.', 409);
+      if (shootSite(task)) {
+        const current = db.prepare('SELECT site FROM attendance WHERE employee_id = ? AND clock_out IS NULL').get(task.employee_id);
+        if (!current?.site || JSON.parse(current.site).taskId !== task.id) {
+          throw new RequestError('Clock in at this shoot before tracking time.', 409);
+        }
+      }
       if (active) throw new RequestError('Pause the running task before starting another.', 409);
       return db.prepare('INSERT INTO task_sessions (task_id, employee_id, start_at) VALUES (?, ?, ?) RETURNING *')
         .get(task.id, task.employee_id, now);
@@ -179,6 +239,7 @@ const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/styles.css', ['public/styles.css', 'text/css']],
   ['/app.js', ['public/app.js', 'text/javascript']],
+  ['/attendance-policy.js', ['public/attendance-policy.js', 'text/javascript']],
   ['/studio.webp', ['public/studio.webp', 'image/webp']],
   ['/inter.woff2', ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'font/woff2']],
   ['/manrope.woff2', ['node_modules/@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2', 'font/woff2']],
