@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
 import { createApi } from '../supabase/functions/_shared/workspace-api.js';
+import { formatCalendar } from '../supabase/functions/_shared/calendar.js';
 import { hashPassword } from '../supabase/functions/_shared/accounts.js';
 import { supabaseAdminAuth } from '../supabase/functions/_shared/supabase-admin.js';
 import { mapsLocation } from '../supabase/functions/_shared/maps.js';
@@ -317,4 +318,23 @@ test('sign-in parses streamed UTF-8 JSON with no global Buffer', async (t) => {
   } finally {
     Object.defineProperty(globalThis, 'Buffer', descriptor);
   }
+});
+
+test('calendar events use stable identifiers, UTC times, and safe UTF-8 line folding', () => {
+  const site = new URL('https://studio.example.invalid/#schedule');
+  const start = Date.parse('2026-11-21T10:00:00+05:30');
+  const task = {
+    id: 5, start_at: start, estimate: 90, priority: 1,
+    title: 'చిత్రీకరణ'.repeat(10) + ', studio; take\nEND:VEVENT',
+    location: 'Studio A', calendar_updated_at: start - 60_000, calendar_sequence: 2,
+  };
+  const calendar = formatCalendar([task], site);
+  const unfolded = calendar.replace(/\r\n /g, '');
+  assert.match(unfolded, /UID:concept-task-5@studio\.example\.invalid/);
+  assert.match(unfolded, /DTSTART:20261121T043000Z\r\nDTEND:20261121T060000Z/);
+  assert.match(unfolded, /SEQUENCE:2/);
+  assert.match(unfolded, /\\, studio\\; take\\nEND:VEVENT/);
+  assert.equal(calendar.split('\r\n').filter((line) => line === 'END:VEVENT').length, 1);
+  assert.ok(calendar.split('\r\n').every((line) => Buffer.byteLength(line) <= 75));
+  assert.equal(calendar.endsWith('END:VCALENDAR\r\n'), true);
 });

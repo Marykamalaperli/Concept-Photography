@@ -34,6 +34,12 @@ Open **Notifications → Enable mobile alerts** on each phone and grant permissi
 
 The hosted workspace checks schedules every minute and sends a push around 30 minutes before assigned work starts. Assignments added inside that window are picked up on the next check. Push can arrive while the workspace is closed. Use **Disable mobile alerts** or sign out to stop alerts on that device. Delivery time depends on the phone’s connection and notification settings. The Notifications page also keeps the in-app reminders.
 
+### Subscribe to your assigned work
+
+In the hosted workspace, open **My Schedule → Connect calendar → Create private link**. Copy the link and subscribe in the calendar account associated with your work email. In Google Calendar, use **Other calendars → From URL** on the web. In Outlook, use **Add calendar → Subscribe from web**. In Apple Calendar, use **Open Apple Calendar** or paste the URL into a new subscription.
+
+Each feed includes only work assigned to that employee and uses the scheduled start and duration. Calendar providers check for changes on their own refresh schedules. Keep the link private. Replacing or disabling a link stops access through the previous URL. Admins can see feed activity in the employee directory.
+
 ## Connect the GitHub Pages site to Supabase
 
 The Pages build points to the project in [supabase/project.json](supabase/project.json). Supabase Postgres holds the shared studio records and the `concept-api` Edge Function handles account creation, sign-in, and permissions. Admins sign in through Supabase Authentication. Employees use the credentials the admin creates in the workspace. The private database schema is accessible through the function, and the website bundle contains only its public URL.

@@ -345,6 +345,13 @@ function table(caption, columns, rows) {
     `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 
+function calendarFeedStatus(employeeId) {
+  const feed = state.calendarFeeds?.find((item) => item.employee_id === employeeId);
+  if (!feed) return tag('No link', 'neutral');
+  if (!feed.last_read_at) return tag('Link created', 'sand');
+  return `<span>Feed accessed</span><small>${shortDate.format(feed.last_read_at)} · ${time(feed.last_read_at)} IST</small>`;
+}
+
 function teamPage() {
   const staff = state.employees.filter((person) => !person.is_admin);
   const rows = staff.map((person) => [
@@ -352,12 +359,13 @@ function teamPage() {
     e(person.email),
     e(person.phone || '—'),
     person.has_login ? tag('Login set', 'sage') : tag('Credentials needed', 'sand'),
+    ...(state.calendarFeeds ? [calendarFeedStatus(person.id)] : []),
     shiftFor(person.id) ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral'),
     state.tasks.filter((task) => task.employee_id === person.id && !task.completed_at && !task.is_open).length,
     actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id),
   ]);
   return `${heading('Employees', 'Manage employee profiles and sign-in credentials.', actionButton('Add employee', 'new-employee', 'user-plus'))}
-    <section class="panel">${rows.length ? table('Employee directory', ['Employee', 'Sign-in email', 'Mobile', 'Credentials', 'Attendance', 'Open assignments', 'Actions'], rows) : empty('Add an employee to create their login and assign their first shoot.')}</section>`;
+    <section class="panel">${rows.length ? table('Employee directory', ['Employee', 'Sign-in email', 'Mobile', 'Credentials', ...(state.calendarFeeds ? ['Calendar'] : []), 'Attendance', 'Open assignments', 'Actions'], rows) : empty('Add an employee to create their login and assign their first shoot.')}</section>`;
 }
 
 function schedulePage() {
@@ -370,7 +378,11 @@ function schedulePage() {
     return true;
   });
   const options = [['upcoming', 'Upcoming'], ['today', 'Today'], ['all', 'All work'], ['completed', 'Completed']];
-  return `${heading(manager() ? 'Schedule' : 'My Schedule', manager() ? 'Review assignments, open shoots, and tracked work.' : 'Priority assignments are listed first. Times are in IST.', manager() ? actionButton('Schedule shoot', 'new-task', 'plus') : '')}
+  const actions = `<div class="card-actions schedule-actions">
+    ${apiOrigin ? actionButton('Connect calendar', 'calendar-open', 'calendar-plus', 'secondary') : ''}
+    ${manager() ? actionButton('Schedule shoot', 'new-task', 'plus') : ''}
+  </div>`;
+  return `${heading(manager() ? 'Schedule' : 'My Schedule', manager() ? 'Review assignments, open shoots, and tracked work.' : 'Priority assignments are listed first. Times are in IST.', actions)}
     <div class="filter-bar">
       ${options.map(([key, label]) => `<button type="button" class="filter ${key === scheduleFilter ? 'active' : ''}" data-action="schedule-filter" data-value="${key}" aria-pressed="${key === scheduleFilter}">${label}</button>`).join('')}
       ${manager() ? `<select id="schedule-employee" aria-label="Filter schedule by employee"><option value="all">All employees</option>
@@ -378,6 +390,44 @@ function schedulePage() {
     </div>
     ${filtered.length ? `<div class="task-grid">${filtered.map((task) => taskCard(task)).join('')}</div>` : `<section class="panel">${empty('No work matches this view.')}</section>`}`;
 }
+
+function calendarDialog(info) {
+  const button = info.enabled
+    ? actionButton('Replace calendar link', 'calendar-issue', 'refresh-cw', 'secondary')
+    : actionButton('Create private link', 'calendar-issue', 'link');
+  const providerInstructions = info.url ? `
+    <label class="calendar-link">Private calendar URL
+      <input type="url" id="personal-calendar-url" value="${e(info.url)}" readonly spellcheck="false">
+    </label>
+    <div class="card-actions">
+      ${actionButton('Copy link', 'calendar-copy', 'copy', 'secondary')}
+      <a class="text-link" href="${e(info.url.replace(/^https:/, 'webcal:'))}" referrerpolicy="no-referrer">Open Apple Calendar</a>
+    </div>
+    <ul class="calendar-instructions">
+      <li><strong>Google Calendar</strong> — In the web calendar, use <b>Other calendars → From URL</b>.</li>
+      <li><strong>Outlook</strong> — Use <b>Add calendar → Subscribe from web</b>.</li>
+      <li><strong>Apple Calendar</strong> — Open the link above or add it as a calendar subscription.</li>
+    </ul>` : '';
+  const status = info.enabled
+    ? (info.lastReadAt ? `Last feed access ${shortDate.format(info.lastReadAt)}, ${time(info.lastReadAt)} IST.` : 'Private calendar link created.')
+    : 'Create a link to subscribe to your assigned work.';
+  openDialog('Connect calendar', `Use your calendar account for ${e(actor().email)}.`, `
+    <div class="calendar-connect">
+      <p>${status}</p>
+      ${providerInstructions}
+      ${info.url ? '<p>Keep the link private. Your calendar provider controls how often it refreshes.</p>' : ''}
+      ${info.enabled && !info.url ? '<p>Use your saved link, or replace it to get a new one. Existing subscriptions stop when you replace or disable the link.</p>' : ''}
+      <div class="card-actions">
+        ${info.url ? '' : button}
+        ${info.enabled ? actionButton('Disable link', 'calendar-revoke', 'link-2-off', 'secondary') : ''}
+      </div>
+    </div>
+  `);
+}
+
+dialog.addEventListener('close', () => {
+  if (!dialog.open && dialog.querySelector('.calendar-connect')) dialog.replaceChildren();
+});
 
 function workControls(task) {
   if ((manager() && task.employee_id !== actorId) || task.is_open) return '';
@@ -1047,6 +1097,34 @@ document.addEventListener('click', (event) => {
     case 'new-client': clientForm(); break;
     case 'edit-client': clientForm(state.clients.find((client) => client.id === id)); break;
     case 'new-task': taskForm(); break;
+    case 'calendar-open':
+      mutate(button, async () => calendarDialog(await request('calendar')));
+      break;
+    case 'calendar-issue':
+      mutate(button, async () => {
+        calendarDialog(await request('calendar/issue', {}));
+        await refresh({ force: true });
+      });
+      break;
+    case 'calendar-copy':
+      mutate(button, async () => {
+        const field = document.querySelector('#personal-calendar-url');
+        try {
+          await navigator.clipboard.writeText(field.value);
+          showToast('Calendar link copied.');
+        } catch {
+          field.focus();
+          field.select();
+        }
+      });
+      break;
+    case 'calendar-revoke':
+      mutate(button, async () => {
+        calendarDialog(await request('calendar/revoke', {}));
+        await refresh({ force: true });
+        showToast('Calendar link disabled.');
+      });
+      break;
     case 'edit-task': taskForm(task()); break;
     case 'office-location': locationForm(); break;
     case 'request-work': requestForm(state.openWork.find((item) => item.id === id)); break;

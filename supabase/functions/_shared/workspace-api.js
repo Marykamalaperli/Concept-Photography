@@ -110,7 +110,7 @@ async function siteFrom(body) {
   }
 }
 
-export function createApi(db, { bearer = false, secureCookies = false, adminAuth, mobilePush, siteOrigin } = {}) {
+export function createApi(db, { bearer = false, secureCookies = false, adminAuth, mobilePush, calendar, siteOrigin } = {}) {
   const loginAttempts = new Map();
   const sessionOptions = { bearer, secureCookies };
 
@@ -216,6 +216,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       `, actor.id, actor.id),
       ...(manager ? {
         clients: await db.all('SELECT * FROM clients ORDER BY name'),
+        ...(calendar ? { calendarFeeds: await calendar.employees(db) } : {}),
         payments: await db.all('SELECT * FROM payments ORDER BY paid_on DESC, id DESC'),
         expenses: await db.all('SELECT * FROM expenses ORDER BY spent_on DESC, id DESC'),
       } : {}),
@@ -494,6 +495,10 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       if (!actor) throw new RequestError('Sign in to enable mobile alerts.', 401);
       return mobilePush.key(db);
     }
+    if (req.method === 'GET' && path === '/api/calendar' && calendar) {
+      if (!actor) throw new RequestError('Sign in to connect your calendar.', 401);
+      return calendar.status(db, actor.id);
+    }
     if (req.method === 'GET' && path === '/api/state') {
       if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
       return overview(actor, now);
@@ -506,6 +511,10 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       return endSession(db, req, res, sessionOptions);
     }
     if (!actor) throw new RequestError('Sign in to open the workspace.', 401);
+    if (calendar) {
+      if (path === '/api/calendar/issue') return calendar.issue(db, actor);
+      if (path === '/api/calendar/revoke') return calendar.revoke(db, actor.id);
+    }
     if (mobilePush) {
       if (path === '/api/push/status') return mobilePush.status(db, actor.id, body.endpoint);
       if (path === '/api/push/register') return mobilePush.register(db, actor.id, body);

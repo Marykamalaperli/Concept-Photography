@@ -335,3 +335,10 @@ table .tag{white-space:nowrap}
 @media(max-width:380px){.owner-fields{grid-template-columns:1fr}.schedule-row .row-tags{display:none}}
 .auth-connection{margin-top:16px;padding:10px 12px;border:1px solid #ead8bf;border-radius:8px;background:#fff7eb;color:#6d4c28;font-size:12px;line-height:1.5}
 .auth-connection .text-link{padding-bottom:0}
+
+.calendar-connect{display:grid;gap:12px;font-size:13px;line-height:1.5}
+.calendar-connect p,.calendar-instructions{color:var(--muted)}
+.calendar-link{display:grid;gap:5px;font-weight:650}
+.calendar-link input{width:100%;font-weight:400}
+.calendar-instructions{display:grid;gap:6px;margin:0;padding-left:18px}
+.schedule-actions{justify-content:flex-end}

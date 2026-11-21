@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/supabase.yml
       - supabase/config.toml
+      - supabase/migrations/20261121040000_personal_calendars.sql
 
 permissions:
   contents: read
@@ -99,12 +100,15 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PROJECT_REF: ${{ steps.project.outputs.ref }}
+          PROJECT_URL: ${{ steps.project.outputs.url }}
           SITE_ORIGIN: ${{ steps.project.outputs.origin }}
         run: |
           umask 077
           vars_file=$(mktemp)
           trap 'rm -f "$vars_file"' EXIT
           printf 'CONCEPT_SITE_ORIGIN=%s\n' "$SITE_ORIGIN" > "$vars_file"
+          printf 'CONCEPT_PROJECT_URL=%s\n' "$PROJECT_URL" >> "$vars_file"
+          printf 'CONCEPT_WORKSPACE_URL=%s/%s/\n' "$SITE_ORIGIN" "${GITHUB_REPOSITORY#*/}" >> "$vars_file"
           supabase secrets set --project-ref "$PROJECT_REF" --env-file "$vars_file"
       - name: Deploy Edge Function
         env:
@@ -129,6 +133,17 @@ jobs:
             "$PROJECT_URL/functions/v1/concept-api/api/login")
           if [[ $status != 401 ]] || ! jq -e '.error == "Invalid email or password."' "$probe" >/dev/null; then
             echo "::error::Hosted sign-in did not handle the JSON credential probe (HTTP $status)."
+            exit 1
+          fi
+      - name: Check private calendar feed routing
+        shell: bash
+        env:
+          PROJECT_URL: ${{ steps.project.outputs.url }}
+        run: |
+          status=$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code} %{content_type}' \
+            "$PROJECT_URL/functions/v1/concept-api/calendar/$(printf '%064d' 0).ics")
+          if [[ "$status" != '404 text/calendar; charset=utf-8' ]]; then
+            echo "::error::The hosted calendar endpoint did not reject an unused link (HTTP ${status%% *})."
             exit 1
           fi
       - name: Enable and verify scheduled mobile push

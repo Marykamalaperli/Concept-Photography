@@ -1,6 +1,7 @@
 import postgres from 'npm:postgres@3.4.9';
 import webPush from 'npm:web-push@3.6.7';
 import { createApi } from '../_shared/workspace-api.js';
+import { createCalendar } from '../_shared/calendar.js';
 import { createMobilePush } from '../_shared/mobile-push.js';
 import { supabaseAdminAuth } from '../_shared/supabase-admin.js';
 import { numericTypes, postgresAdapter } from '../_shared/postgres-adapter.js';
@@ -27,15 +28,39 @@ const sql = postgres(databaseUrl, {
 
 const database = postgresAdapter(sql);
 const mobilePush = createMobilePush(webPush, siteOrigin);
+const adminAuth = supabaseAdminAuth({ url: supabaseUrl, apiKey: anonKey });
+const calendar = createCalendar({
+  projectUrl: Deno.env.get('CONCEPT_PROJECT_URL') || supabaseUrl,
+  workspaceUrl: Deno.env.get('CONCEPT_WORKSPACE_URL') || siteOrigin,
+  adminAuth,
+});
 const api = createApi(database, {
+  calendar,
   mobilePush,
   bearer: true,
-  adminAuth: supabaseAdminAuth({ url: supabaseUrl, apiKey: anonKey }),
+  adminAuth,
   siteOrigin,
 });
 
 Deno.serve(async (request, info) => {
   const url = new URL(request.url);
+  const path = url.pathname.replace(/^\/(?:functions\/v1\/)?concept-api(?=\/)/, '');
+  const feed = path.match(/^\/calendar\/([a-f0-9]{64})\.ics$/);
+  if (feed && ['GET', 'HEAD'].includes(request.method)) {
+    const headers = {
+      'Content-Type': 'text/calendar; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    };
+    try {
+      const content = await calendar.read(database, feed[1], { track: request.method === 'GET' });
+      return new Response(request.method === 'GET' ? content : null, { status: content === null ? 404 : 200, headers });
+    } catch (error) {
+      console.error('Calendar request failed.', error.name, error.code);
+      return new Response(null, { status: 500, headers });
+    }
+  }
   const origin = request.headers.get('origin');
   const headers = new Headers({
     'Content-Type': 'application/json; charset=utf-8',
@@ -52,7 +77,6 @@ Deno.serve(async (request, info) => {
     headers.set('Access-Control-Max-Age', '600');
   }
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
-  const path = url.pathname.replace(/^\/(?:functions\/v1\/)?concept-api(?=\/)/, '');
   if (!path.startsWith('/api/')) return json(404, { error: 'Route not found.' });
 
   const req = {
