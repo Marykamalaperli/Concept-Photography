@@ -1,5 +1,5 @@
 import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
-import { loginView } from './access-view.js';
+import { loginView, passwordField } from './access-view.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -192,19 +192,7 @@ function loginPage() {
 }
 
 main.addEventListener('click', (event) => {
-  if (event.target.closest('[data-auth-retry]')) {
-    if (!pending) loadSession();
-    return;
-  }
-  const button = event.target.closest('[data-password-toggle]');
-  if (!button) return;
-  const field = document.getElementById(button.getAttribute('aria-controls'));
-  const visible = field.type === 'password';
-  field.type = visible ? 'text' : 'password';
-  const label = visible ? 'Hide password' : 'Show password';
-  button.setAttribute('aria-label', label);
-  button.title = label;
-  button.innerHTML = icon(visible ? 'eye-off' : 'eye');
+  if (event.target.closest('[data-auth-retry]') && !pending) loadSession();
 });
 
 function priority(task) {
@@ -747,7 +735,12 @@ function employeeForm(person) {
     <label>Job role<input name="role" required maxlength="100" value="${e(person?.role)}"></label>
     <label>Mobile number<input name="phone" type="tel" maxlength="30" value="${e(person?.phone)}"></label>
     <label class="full">Sign-in email<input name="email" type="email" autocomplete="off" required maxlength="254" value="${e(person?.email)}"></label>
-    <label class="full">${needsPassword ? 'Password' : 'New password (optional)'}<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" ${needsPassword ? 'required' : ''}></label>
+    ${passwordField({
+      id: 'employee-password',
+      label: needsPassword ? 'Password' : 'New password (optional)',
+      newPassword: true,
+      required: needsPassword,
+    })}
     ${!needsPassword ? '<p class="field-note full">A new password signs the employee out of their current sessions.</p>' : ''}
   `, 'Save employee'));
 }
@@ -1015,6 +1008,18 @@ function applyAction(button, path, body, message) {
 }
 
 document.addEventListener('click', (event) => {
+  const toggle = event.target.closest('[data-password-toggle]');
+  if (toggle) {
+    const field = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (!(field instanceof HTMLInputElement)) return;
+    const visible = field.type === 'password';
+    field.type = visible ? 'text' : 'password';
+    const label = visible ? 'Hide password' : 'Show password';
+    toggle.setAttribute('aria-label', label);
+    toggle.title = label;
+    toggle.innerHTML = icon(visible ? 'eye-off' : 'eye');
+    return;
+  }
   const button = event.target.closest('button[data-action]');
   if (!button || !actor()) return;
   const { action, value } = button.dataset;

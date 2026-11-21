@@ -230,7 +230,7 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
   font-size:13px;
   font-weight:650;
 }
-.auth-password{display:grid;gap:7px}
+.auth-password{display:grid;gap:7px;min-width:0}
 .auth-password small{color:var(--muted);font-size:12px;line-height:1.4}
 .sign-in-fields input{
   min-height:46px;
@@ -254,7 +254,8 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
   transform:translateY(-50%);
   pointer-events:none;
 }
-.auth-input input{padding-left:39px}
+.auth-input input{width:100%;padding-left:39px}
+.form-grid .auth-password input{min-height:42px}
 .auth-input.with-toggle input{padding-right:46px}
 .password-toggle{
   display:grid;

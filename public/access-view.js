@@ -30,6 +30,19 @@ export function accessView({ title, description, content }) {
   </div>`;
 }
 
+export function passwordField({ id, label = 'Password', newPassword = false, required = true }) {
+  return `<div class="auth-password full">
+    <label for="${id}">${label}</label>
+    <span class="auth-input with-toggle">${accessIcon('lock-keyhole')}
+      <input id="${id}" name="password" type="password" autocomplete="${newPassword ? 'new-password' : 'current-password'}"
+        maxlength="128" ${newPassword ? 'minlength="12"' : 'placeholder="Enter your password"'}
+        autocapitalize="none" spellcheck="false" ${required ? 'required' : ''}>
+      <button type="button" class="password-toggle" data-password-toggle aria-controls="${id}"
+        aria-label="Show password" title="Show password">${accessIcon('eye')}</button>
+    </span>
+  </div>`;
+}
+
 export function loginView() {
   return accessView({
     title: 'Sign in',
@@ -38,15 +51,7 @@ export function loginView() {
       <label>Email address
         <span class="auth-input">${accessIcon('mail')}<input name="email" type="email" autocomplete="username" maxlength="254" placeholder="you@company.com" required></span>
       </label>
-      <div class="auth-password">
-        <label for="sign-in-password">Password</label>
-        <span class="auth-input with-toggle">${accessIcon('lock-keyhole')}
-          <input id="sign-in-password" name="password" type="password" autocomplete="current-password"
-            maxlength="128" placeholder="Enter your password" required>
-          <button type="button" class="password-toggle" data-password-toggle aria-controls="sign-in-password"
-            aria-label="Show password" title="Show password">${accessIcon('eye')}</button>
-        </span>
-      </div>
+      ${passwordField({ id: 'sign-in-password' })}
       <p class="form-error" role="alert" hidden></p>
       <button type="submit" class="btn primary auth-submit"><span>Sign in</span>${accessIcon('arrow-right')}</button>
     </form>
