@@ -350,8 +350,8 @@ export function createHrViews(ui) {
             <p class="hr-muted">${dayLabel(day(task.start_at))} · ${time(task.start_at)}</p></div>${task.priority ? tag('Priority', 'peach') : ''}</article>`).join('') :
           empty('No open tasks.'), viewLink('task-board', 'All tasks'), 'hr-span')}
         ${panel('Today’s work', workRows(actor().id, today(), 4), viewLink('work-log', 'Open log'), 'hr-span')}
-        ${panel('Payroll', paySummary(payslips), viewLink('payroll', 'Payslips'))}
-        ${panel('Announcements', announcementRows(state().announcements.slice(0, 2)), viewLink('announcements', 'All updates'))}
+        ${panel('Payroll', paySummary(payslips), viewLink('payroll', 'Payslips'), 'hr-span')}
+        ${panel('Announcements', announcementRows(state().announcements.slice(0, 2)), viewLink('announcements', 'All updates'), 'hr-full')}
       </div>`;
   }
 

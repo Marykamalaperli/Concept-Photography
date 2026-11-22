@@ -342,6 +342,7 @@ table .tag{white-space:nowrap}
 .sidebar-foot{margin-top:24px}
 .hr-dashboard{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;align-items:stretch}
 .hr-span{grid-column:span 2}
+.hr-full{grid-column:1/-1}
 .hr-panel{padding:0;overflow:hidden;container-type:inline-size}
 .hr-panel-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:13px 16px;border-bottom:1px solid var(--stroke);min-height:53px}
 .hr-panel-head h2{font-size:16px;letter-spacing:-.32px;font-weight:800}
