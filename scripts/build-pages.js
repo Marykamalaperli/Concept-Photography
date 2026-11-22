@@ -4,6 +4,7 @@ import { accessView, loginView, workspaceAddress } from '../public/access-view.j
 const output = new URL('../dist/', import.meta.url);
 const publicFiles = new URL('../public/', import.meta.url);
 const packages = new URL('../node_modules/', import.meta.url);
+const brandAssets = ['concept-logo.webp', 'brand-mark.png'];
 
 function openWorkspaceView(workspace) {
   let content;
@@ -44,6 +45,7 @@ async function pagesApp() {
   const meta = `  <meta name="concept-api" content="${url}/functions/v1/concept-api">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${url}; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'">`;
   const assets = [
+    ...brandAssets,
     'styles.css', 'sign-in.webp', 'studio.webp', 'app.js', 'access-view.js', 'hr-views.js',
     'mobile-alerts.js', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
   ];
@@ -58,8 +60,8 @@ async function pagesApp() {
 
 async function pagesLauncher(workspace) {
   const entry = await readFile(new URL('pages.html', import.meta.url), 'utf8');
-  const assets = ['styles.css', 'sign-in.webp', ...(workspace ? [] : ['open-workspace.js', 'access-view.js'])];
-  const icons = ['camera', 'key-round', 'arrow-right', ...(workspace ? [] : ['link'])];
+  const assets = [...brandAssets, 'styles.css', 'sign-in.webp', ...(workspace ? [] : ['open-workspace.js', 'access-view.js'])];
+  const icons = ['key-round', 'arrow-right', ...(workspace ? [] : ['link'])];
   await Promise.all([
     ...assets.map((asset) => cp(new URL(asset, publicFiles), new URL(asset, output))),
     ...icons.map((icon) => cp(new URL(`lucide-static/icons/${icon}.svg`, packages), new URL(`icons/${icon}.svg`, output))),

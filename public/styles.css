@@ -17,8 +17,7 @@ button:disabled{cursor:wait;opacity:.65}
 .skip-link:focus{top:10px}
 .sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar);background:#201e1d;color:#fff;display:flex;flex-direction:column;z-index:5;padding:27px 15px 17px}
 .brand{display:flex;gap:11px;align-items:center;margin:0 7px 46px}
-.brand-mark{display:grid;place-items:center;background:#bc583c;border-radius:11px;width:39px;height:39px;color:#fff}
-.brand-mark .icon{width:21px;height:21px}
+.brand-mark{display:block;flex:none;object-fit:contain}
 .brand strong,.brand small{display:block}
 .brand strong{font:800 19px/1.05 Manrope,sans-serif;letter-spacing:-.45px}
 .brand small{font-size:9px;letter-spacing:2.15px;color:#cfbeb4;margin-top:5px;text-transform:uppercase}
@@ -30,7 +29,7 @@ button:disabled{cursor:wait;opacity:.65}
 .nav-link.active .icon{color:#e79173}
 .nav-count{margin-left:auto;background:#b44f34;color:white;font-size:11px;border-radius:9px;min-width:18px;padding:2px 5px;text-align:center}
 .sidebar-foot{margin-top:auto;padding:14px 9px 2px;border-top:1px solid #3b3530;display:flex;gap:10px;align-items:center}
-.sidebar-foot .icon{color:#e1957b}
+.sidebar-foot img{flex:none}
 .sidebar-foot strong,.sidebar-foot small{display:block}
 .sidebar-foot strong{font-size:12px;font-weight:650}
 .sidebar-foot small{font-size:11px;color:#b7a99e;margin-top:4px}
@@ -191,7 +190,8 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
   background:linear-gradient(0deg,#180e0bd4 0%,transparent 46%),linear-gradient(125deg,#1a110d8f 0%,transparent 52%);
 }
 .auth-aside>*{position:relative}
-.auth-aside .brand{margin:0;width:max-content}
+.auth-brand{width:112px;padding:11px;background:#fffdf8;border-radius:12px}
+.auth-brand img{display:block;width:100%;height:auto}
 .auth-aside-copy h2{font-size:clamp(32px,4vw,50px);line-height:1;letter-spacing:-.05em}
 .auth-content{display:grid;place-items:center;padding:40px clamp(24px,4vw,60px)}
 .auth-form{width:min(100%,350px)}
@@ -281,7 +281,8 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
 @media(max-width:700px){
   .signed-out main{min-height:100dvh;padding:12px}
   .auth-layout{grid-template-columns:1fr;min-height:0;width:min(440px,100%);border-radius:18px}
-  .auth-aside{min-height:168px;padding:17px 20px;background-position:center 52%}
+  .auth-aside{min-height:190px;gap:14px;padding:17px 20px;background-position:center 52%}
+  .auth-brand{width:86px;padding:8px}
   .auth-aside-copy h2{font-size:28px}
   .auth-content{padding:25px 20px 28px}
   .auth-form{max-width:370px}

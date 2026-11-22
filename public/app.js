@@ -175,7 +175,7 @@ function renderChrome() {
   sidebar.classList.toggle('open', mobileMenu);
   sidebar.innerHTML = `
     <a class="brand" href="#dashboard" aria-label="Concept Photography dashboard">
-      <span class="brand-mark">${icon('camera')}</span><span><strong>Concept</strong><small>Photography</small></span>
+      <img class="brand-mark" src="./brand-mark.png" width="39" height="39" alt=""><span><strong>Concept</strong><small>Photography</small></span>
     </a>
     <p class="nav-label">${manager() ? 'Studio admin' : 'Workspace'}</p>
     <nav class="nav" aria-label="Workspace">
@@ -186,7 +186,7 @@ function renderChrome() {
         </a>`;
       }).join('')}
     </nav>
-    <div class="sidebar-foot">${icon('aperture')}<div><strong>Concept Photography</strong><small>Studio workspace · IST</small></div></div>`;
+    <div class="sidebar-foot"><img src="./brand-mark.png" width="18" height="18" alt=""><div><strong>Concept Photography</strong><small>Studio workspace · IST</small></div></div>`;
   topbar.innerHTML = `
     <div class="breadcrumb">
       <button type="button" class="icon-button menu-button" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="${mobileMenu}" data-action="menu">${icon('menu')}</button>

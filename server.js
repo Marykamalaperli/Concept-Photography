@@ -31,6 +31,8 @@ const assets = new Map([
   ['/mobile-alerts.js', ['public/mobile-alerts.js', 'text/javascript']],
   ['/push-worker.js', ['public/push-worker.js', 'text/javascript']],
   ['/manifest.webmanifest', ['public/manifest.webmanifest', 'application/manifest+json']],
+  ['/concept-logo.webp', ['public/concept-logo.webp', 'image/webp']],
+  ['/brand-mark.png', ['public/brand-mark.png', 'image/png']],
   ['/app-icon-192.png', ['public/app-icon-192.png', 'image/png']],
   ['/app-icon-512.png', ['public/app-icon-512.png', 'image/png']],
   ['/sign-in.webp', ['public/sign-in.webp', 'image/webp']],

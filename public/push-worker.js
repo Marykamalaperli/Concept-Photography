@@ -15,7 +15,7 @@ self.addEventListener('push', (event) => {
     body: data.body,
     tag: data.tag,
     icon,
-    badge: icon,
+    badge: new URL('brand-mark.png', self.registration.scope).href,
   }));
 });
 
