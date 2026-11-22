@@ -24,7 +24,8 @@ const bookingColors = { booked: 'lavender', postponed: 'sand', done: 'sage', can
 
 export function createHrViews(ui) {
   const { actor, state, manager, e, icon, tag, heading, viewLink, empty, actionButton, time, timeInput, day, today,
-    money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render } = ui;
+    money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render,
+    shootEndLabel } = ui;
   let attendanceMonth = '';
   let attendancePerson = '';
   let shootMonth = '';
@@ -178,7 +179,7 @@ export function createHrViews(ui) {
       ${bookingState(shoot) === 'postponed' ? `<span class="hr-date-tile">${icon('calendar-clock')}</span>` : dateTile(day(shoot.start_at))}
       <div><button type="button" class="hr-title-button" data-action="details" data-id="${shoot.id}">${e(shoot.title)}</button>
       <p class="hr-muted">${bookingState(shoot) === 'postponed' ? e(shoot.location) :
-        `${time(shoot.start_at)} – ${time(shoot.start_at + shoot.estimate * 60_000)} · ${e(shoot.location)}`}${shoot.crew?.length ? ' · ' + e(shoot.crew.map((member) => member.employee_id === actor().id ? 'You' : member.name).join(', ')) : ''}</p></div>
+        `${time(shoot.start_at)} – ${shootEndLabel(shoot)} · ${e(shoot.location)}`}${shoot.crew?.length ? ' · ' + e(shoot.crew.map((member) => member.employee_id === actor().id ? 'You' : member.name).join(', ')) : ''}</p></div>
       ${calendarTag(shoot)}</article>`).join('') : empty('No shoots to show.');
   }
 

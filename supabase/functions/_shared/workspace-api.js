@@ -348,13 +348,18 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     const location = text(body.location, 'location name');
     const category = text(body.category, 'work category');
     if (!categories.includes(category)) throw new RequestError('Choose a valid work category.');
-    const estimate = Number(body.estimate);
-    if (!Number.isInteger(estimate) || estimate < 1 || estimate > 1440) {
-      throw new RequestError('Enter a duration from 1 to 1,440 minutes.');
-    }
     const startAt = Date.parse(body.startAt);
     if (!Number.isFinite(startAt)) throw new RequestError('Choose a valid start date and time.');
     const isShoot = category === 'Photo shoot';
+    const hasEnd = isShoot && Object.hasOwn(body, 'endAt');
+    const endAt = hasEnd ? Date.parse(body.endAt) : null;
+    if (hasEnd && (!Number.isFinite(endAt) || endAt <= startAt)) {
+      throw new RequestError('Choose an end date and time after the start.');
+    }
+    const estimate = hasEnd ? (endAt - startAt) / 60_000 : Number(body.estimate);
+    if (!Number.isInteger(estimate) || estimate < 1 || estimate > 1440) {
+      throw new RequestError(hasEnd ? 'Schedule the shoot for at least one minute and up to 24 hours.' : 'Enter a duration from 1 to 1,440 minutes.');
+    }
     if (!actor.is_admin && (isShoot || body.id)) throw new RequestError('You can add individual tasks to your own board.', 403);
     const isOpen = actor.is_admin && body.assignment === 'open';
 
@@ -362,8 +367,11 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     const income = isShoot ? paise(body.income, true) : 0;
     return db.transaction(async (store) => {
       const current = body.id ? await getTask(body.id, store) : null;
+      const completed = current?.completed_at != null;
+      if (current && current.category !== category) throw new RequestError('Keep the original work category when editing.');
+      if (completed && !isShoot) throw new RequestError('Completed tasks cannot be rescheduled.', 409);
       const employee = await getEmployee(isOpen || !actor.is_admin ? actor.id : body.employeeId, store);
-      if (!isOpen && !employee.has_login && !employee.is_admin) throw new RequestError('Set up this employee’s login before assigning work.');
+      if (!completed && !isOpen && !employee.has_login && !employee.is_admin) throw new RequestError('Set up this employee’s login before assigning work.');
       const storedCrew = current && isShoot
         ? (await store.all('SELECT employee_id FROM shoot_crew WHERE task_id = ? ORDER BY employee_id', current.id)).map((member) => member.employee_id)
         : [];
@@ -373,18 +381,20 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       }
       const crew = [...new Set(selectedCrew.map(idValue))].filter((id) => id !== employee.id).sort((a, b) => a - b);
       const crewChanged = crew.join() !== storedCrew.join();
+      if (completed && (isOpen || employee.id !== current.employee_id || crewChanged)) {
+        throw new RequestError('The lead and crew are fixed once the shoot is complete.', 409);
+      }
       if (crewChanged) {
         for (const id of crew) {
           const member = await getEmployee(id, store);
           if (!member.has_login && !member.is_admin) throw new RequestError('Set up each crew member’s login before assigning a shoot.');
         }
       }
+      const siteChanged = current && (current.site_latitude !== (site?.latitude ?? null) || current.site_longitude !== (site?.longitude ?? null));
       if (current) {
-        if (current.completed_at) throw new RequestError('Completed work cannot be rescheduled.', 409);
-        if (current.category !== category) throw new RequestError('Keep the original work category when editing.');
         const hasTime = await store.get('SELECT 1 FROM task_sessions WHERE task_id = ?', current.id);
         if (hasTime && (isOpen || employee.id !== current.employee_id || crewChanged)) throw new RequestError('Work with recorded time cannot be reassigned.', 409);
-        if (hasTime && (current.site_latitude !== (site?.latitude ?? null) || current.site_longitude !== (site?.longitude ?? null))) {
+        if (hasTime && !completed && siteChanged) {
           throw new RequestError('The site cannot change after work time has been recorded.', 409);
         }
         const { total: paid } = await store.get('SELECT COALESCE(SUM(amount_paise), 0) AS total FROM payments WHERE task_id = ?', current.id);
@@ -393,7 +403,8 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       const clientId = isShoot ? await clientForTask(body, store) : null;
       const status = isShoot && body.shootStatus ? body.shootStatus : current?.shoot_status ?? 'booked';
       if (!['booked', 'postponed', 'cancelled'].includes(status)) throw new RequestError('Choose a valid booking status.');
-      if (current && isShoot && (status !== current.shoot_status || current.start_at !== startAt || current.estimate !== estimate)) {
+      if (completed && status !== current.shoot_status) throw new RequestError('Completed shoots must keep their Done status.', 409);
+      if (current && isShoot && (status !== current.shoot_status || siteChanged || current.start_at !== startAt || current.estimate !== estimate)) {
         await ensureShootInactive(store, current);
       }
       const values = [title, employee.id, startAt, estimate, location, category, site?.latitude ?? null,
@@ -405,7 +416,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
             site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?, shoot_status = ?
           WHERE id = ? RETURNING *
         `, ...values, current.id);
-        if (current.start_at !== startAt || current.employee_id !== employee.id || isOpen || status !== current.shoot_status) {
+        if (!completed && (current.start_at !== startAt || current.employee_id !== employee.id || isOpen || status !== current.shoot_status)) {
           await store.run('DELETE FROM reminders WHERE task_id = ?', task.id);
         }
         if (!isOpen) await store.run("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND status = 'pending'", now, task.id);
@@ -561,7 +572,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     `, task.employee_id, task.id);
     const activeTask = await store.get('SELECT 1 FROM task_sessions WHERE task_id = ? AND end_at IS NULL', task.id);
     if (activeTask || (activeShifts.some(({ site }) => site && JSON.parse(site).taskId === task.id))) {
-      throw new RequestError('The employee must clock out of this shoot before its status changes.', 409);
+      throw new RequestError('Everyone must clock out of the shoot before its booking can change.', 409);
     }
   }
 

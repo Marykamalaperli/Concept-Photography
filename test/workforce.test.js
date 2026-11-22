@@ -203,8 +203,28 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.equal(await clock(staff, 'observe', shootCoords, { shiftId: shift.id + 1 }), null);
   const returned = await clock(staff, 'observe', shootCoords, { shiftId: shift.id });
   assert.equal(returned.in_reason, 'geofence');
-  await staff('task-action', { taskId: assigned.id, action: 'complete' });
+  const finished = await staff('task-action', { taskId: assigned.id, action: 'complete' });
+  const correction = {
+    ...createShoot, id: assigned.id, title: 'Portrait shoot (updated)', location: 'New courtyard name',
+    startAt: '2026-11-21T23:00:00+05:30', endAt: '2026-11-22T02:30:00+05:30', mapsUrl: maps(office),
+  };
+  await admin('tasks', correction, 409);
   await clock(staff, 'out', shootCoords, { shiftId: returned.id });
+  const tracked = await staff('state');
+  await staff('tasks', correction, 403);
+  await admin('tasks', { ...correction, endAt: correction.startAt }, 400);
+  await admin('tasks', { ...correction, endAt: '2026-11-22T23:01:00+05:30' }, 400);
+  await admin('tasks', { ...correction, employeeId: colleague.id }, 409);
+  await admin('tasks', { ...correction, shootStatus: 'cancelled' }, 409);
+  const edited = await admin('tasks', correction);
+  assert.equal(edited.completed_at, finished.completed_at);
+  assert.equal(edited.start_at, Date.parse(correction.startAt));
+  assert.equal(edited.estimate, 210);
+  assert.equal(edited.site_latitude, office.latitude);
+  const afterEdit = await staff('state');
+  assert.deepEqual(afterEdit.attendance, tracked.attendance);
+  assert.deepEqual(afterEdit.sessions, tracked.sessions);
+  assert.equal(afterEdit.tasks.find((task) => task.id === assigned.id).title, correction.title);
 
   const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(Date.now());
   const payment = await admin('payments', { taskId: assigned.id, amount: '1000.50', date, note: 'Deposit' });
@@ -219,7 +239,9 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await staff('login', credentials, 401);
   await staff('login', { ...credentials, password: 'Rotated example passphrase' });
 
-  const crew = await admin('tasks', { ...createShoot, title: 'Crew booking', crew: [colleague.id] });
+  const crewEnd = new Date(Date.parse(createShoot.startAt) + 75 * 60_000).toISOString();
+  const crew = await admin('tasks', { ...createShoot, title: 'Crew booking', crew: [colleague.id], endAt: crewEnd });
+  assert.equal(crew.estimate, 75);
   const crewOverview = await other('state');
   assert.deepEqual(crewOverview.tasks[0].crew.map((entry) => entry.employee_id).sort(), [photographer.id, colleague.id].sort());
   assert.equal(crewOverview.reminders[0].task_id, crew.id);

@@ -108,6 +108,12 @@ const shoots = () => state.tasks.filter((task) => task.category === 'Photo shoot
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (paise) => rupees.format(paise / 100);
 const studioTimeInput = new Intl.DateTimeFormat('en-GB', { timeZone: zone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' });
+const studioDateTimeInput = (value) => `${day(value)}T${studioTimeInput.format(value)}`;
+
+function shootEndLabel(task) {
+  const end = task.start_at + task.estimate * 60_000;
+  return `${day(end) === day(task.start_at) ? '' : `${shortDate.format(end)} · `}${time(end)}`;
+}
 
 function currentPage() {
   const hash = window.location.hash.slice(1);
@@ -476,7 +482,7 @@ function taskCard(task, inDialog = false) {
       ${task.crew?.length ? `<div class="inline">${icon('users')}${e(task.crew.map((member) => member.name).join(', '))}</div>` :
         manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
       <div class="inline">${icon('calendar-days')}${task.shoot_status === 'postponed' ? 'Awaiting a new date' :
-        `${shortDate.format(task.start_at)} · ${time(task.start_at)} IST`}</div>
+        `${shortDate.format(task.start_at)} · ${time(task.start_at)}${isShoot ? ` – ${shootEndLabel(task)}` : ''} IST`}</div>
       <div class="inline">${icon('map-pin')}${e(task.location)} ${task.maps_url ? externalLink(task.maps_url, 'Map') : ''}</div>
       ${task.client_name ? `<div class="inline">${icon('contact-round')}${e(task.client_name)} · <a class="map-link" href="tel:${e(task.client_phone)}">${e(task.client_phone)}</a></div>` : ''}
       ${manager() && isShoot ? `<div class="inline">${icon('indian-rupee')}${money(task.income_paise)} expected income</div>` : ''}
@@ -487,7 +493,7 @@ function taskCard(task, inDialog = false) {
       <div><small>${manager() && task.crew?.length > 1 ? 'Crew time tracked' : 'Time tracked'}</small><strong ${activeSession(task) ? `data-elapsed="${task.id}"` : ''}>${elapsed(task)}</strong></div>
     </div>
     <div class="card-actions">${workControls(task)}
-      ${manager() && !task.completed_at ? actionButton('Edit schedule', 'edit-task', 'pencil', 'secondary', task.id) : ''}
+      ${manager() && (isShoot || !task.completed_at) ? actionButton('Edit schedule', 'edit-task', 'pencil', 'secondary', task.id) : ''}
       ${manager() && isShoot && !task.completed_at && !task.is_open && task.shoot_status === 'booked'
         ? actionButton('Mark shoot done', 'shoot-done', 'circle-check', 'secondary', task.id) : ''}
     </div>
@@ -623,7 +629,7 @@ function notificationsPage() {
 
 const hrViews = createHrViews({
   actor, state: () => state, manager, e, icon, tag, heading, viewLink, empty, actionButton, time, timeInput: studioTimeInput,
-  day, today, money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render,
+  day, today, money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render, shootEndLabel,
 });
 
 const pages = {
@@ -846,29 +852,41 @@ function taskForm(task, type = 'all') {
   const self = !manager();
   const category = task?.category || (isBoard ? 'Editing' : 'Photo shoot');
   const isShoot = category === 'Photo shoot';
+  const completed = isShoot && Boolean(task?.completed_at);
   const isOpen = Boolean(task?.is_open);
   const employees = state.employees.filter((person) => person.has_login || person.is_admin);
   const staff = employees.filter((person) => !person.is_admin);
   const selected = (isOpen ? null : task?.employee_id) ?? staff[0]?.id ?? actorId;
   const clientId = task?.client_id;
   openDialog(task ? 'Edit schedule' : isBoard ? (self ? 'Add task' : 'Assign task') : 'Schedule shoot',
-    self ? 'This task will appear on your board.' : 'Direct assignments are marked as priority on the employee’s schedule.', entryForm('tasks', `
+    completed ? 'Update the completed shoot’s details and scheduled times.' : self ? 'This task will appear on your board.' :
+      'Direct assignments are marked as priority on the employee’s schedule.', entryForm('tasks', `
     ${task ? `<input type="hidden" name="id" value="${task.id}"><input type="hidden" name="category" value="${e(category)}">` : ''}
     <label class="full">Shoot or task name<input name="title" required maxlength="100" value="${e(task?.title)}"></label>
     ${!task ? type === 'shoot' ? '<input type="hidden" name="category" value="Photo shoot">' :
       `<label>Work type<select name="category">${Object.keys(categories).filter((name) => !isBoard || name !== 'Photo shoot').map((name) => `<option>${name}</option>`).join('')}</select></label>` : ''}
-    ${self ? '' : `<label>Assignment<select name="assignment"><option value="assigned">Assign directly</option><option value="open" ${isOpen ? 'selected' : ''}>Open for employee requests</option></select></label>
+    ${self ? '' : completed ? `<input type="hidden" name="employeeId" value="${task.employee_id}">` :
+      `<label>Assignment<select name="assignment"><option value="assigned">Assign directly</option><option value="open" ${isOpen ? 'selected' : ''}>Open for employee requests</option></select></label>
     <label class="full assignee" ${isOpen ? 'hidden' : ''}>Assigned employee or shoot lead<select name="employeeId" required ${isOpen ? 'disabled' : ''}>
       ${[...staff, ...employees.filter((person) => person.is_admin)].map((person) => `<option value="${person.id}" ${person.id === selected ? 'selected' : ''}>${e(person.name)}</option>`).join('')}</select></label>`}
-    <label>Scheduled date<input name="startDate" type="date" required value="${task ? day(task.start_at) : today()}"></label>
-    <label>Scheduled time (IST)<input name="startTime" type="time" required value="${task ? studioTimeInput.format(task.start_at) : ''}"></label>
-    <label>Duration in minutes<input name="estimate" type="number" required min="1" max="1440" value="${task?.estimate ?? 60}"></label>
+    <fieldset class="full shoot-time-fields" ${isShoot ? '' : 'hidden disabled'}><legend>Shoot time</legend>
+      <div class="form-grid">
+        <label>From (IST)<input name="shootFrom" type="datetime-local" required value="${task ? studioDateTimeInput(task.start_at) : ''}"></label>
+        <label>To (IST)<input name="shootTo" type="datetime-local" required value="${task ? studioDateTimeInput(task.start_at + task.estimate * 60_000) : ''}" aria-describedby="shoot-time-help"></label>
+      </div>
+      <p class="field-note" id="shoot-time-help">Shoots can end the next day and run for up to 24 hours.</p>
+    </fieldset>
+    <fieldset class="full task-time-fields" ${isShoot ? 'hidden disabled' : ''}>
+      <label>Scheduled date<input name="startDate" type="date" required value="${task ? day(task.start_at) : today()}"></label>
+      <label>Scheduled time (IST)<input name="startTime" type="time" required value="${task ? studioTimeInput.format(task.start_at) : ''}"></label>
+      <label>Duration in minutes<input name="estimate" type="number" required min="1" max="1440" value="${task?.estimate ?? 60}"></label>
+    </fieldset>
     <label>Location name<input name="location" required maxlength="100" value="${e(task?.location)}"></label>
     <fieldset class="full shoot-fields" ${isShoot ? '' : 'hidden disabled'}><legend>Shoot and client details</legend>
       <div class="form-grid">
-        <label class="full">Booking status<select name="shootStatus">${['booked', 'postponed', 'cancelled'].map((item) =>
-          `<option value="${item}" ${item === task?.shoot_status ? 'selected' : ''}>${item[0].toUpperCase() + item.slice(1)}${item === 'postponed' ? ' · date to be confirmed' : ''}</option>`).join('')}</select></label>
-        ${!self && employees.length > 1 ? `<fieldset class="full crew-fields" ${isOpen ? 'hidden disabled' : ''}><legend>Additional shoot crew</legend>
+        ${completed ? '' : `<label class="full">Booking status<select name="shootStatus">${['booked', 'postponed', 'cancelled'].map((item) =>
+          `<option value="${item}" ${item === task?.shoot_status ? 'selected' : ''}>${item[0].toUpperCase() + item.slice(1)}${item === 'postponed' ? ' · date to be confirmed' : ''}</option>`).join('')}</select></label>`}
+        ${!self && !completed && employees.length > 1 ? `<fieldset class="full crew-fields" ${isOpen ? 'hidden disabled' : ''}><legend>Additional shoot crew</legend>
           <div class="hr-crew-options">${employees.filter((person) => person.id !== selected).map((person) =>
             `<label><input type="checkbox" name="crew" value="${person.id}"
               ${task?.crew?.some((member) => member.employee_id === person.id) ? 'checked' : ''}>${e(person.name)}</label>`).join('')}
@@ -888,7 +906,7 @@ function taskForm(task, type = 'all') {
 }
 
 function taskDialog(task) {
-  openDialog(e(task.title), e(task.category), taskCard(task, true));
+  openDialog(e(task.title), e(task.category) + (task.category === 'Photo shoot' && task.completed_at ? ' · Done' : ''), taskCard(task, true));
   dialog.dataset.taskId = task.id;
 }
 
@@ -1250,7 +1268,15 @@ document.addEventListener('change', (event) => {
   }
   const form = input.form;
   if (form?.dataset.form !== 'tasks') return;
-  if (input.name === 'category') toggleFields(form.querySelector('.shoot-fields'), input.value === 'Photo shoot');
+  if (input.name === 'category') {
+    const shoot = input.value === 'Photo shoot';
+    toggleFields(form.querySelector('.shoot-fields'), shoot);
+    toggleFields(form.querySelector('.shoot-time-fields'), shoot);
+    toggleFields(form.querySelector('.task-time-fields'), !shoot);
+  }
+  if (input.name === 'shootFrom' && input.value && !form.elements.shootTo.value) {
+    form.elements.shootTo.value = studioDateTimeInput(Date.parse(`${input.value}:00+05:30`) + 60 * 60_000);
+  }
   if (input.name === 'clientId') toggleFields(form.querySelector('.owner-fields'), !input.value);
   if (input.name === 'assignment') {
     const direct = input.value !== 'open';
@@ -1282,10 +1308,16 @@ document.addEventListener('submit', (event) => {
   if (pending) return;
   const errorNote = form.querySelector('.form-error');
   errorNote.hidden = true;
-  const data = Object.fromEntries(new FormData(form));
+  const fields = new FormData(form);
+  const data = Object.fromEntries(fields);
   if (kind === 'tasks') {
-    data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
-    data.crew = new FormData(form).getAll('crew');
+    if (data.category === 'Photo shoot') {
+      data.startAt = `${data.shootFrom}:00+05:30`;
+      data.endAt = `${data.shootTo}:00+05:30`;
+      if (form.querySelector('.crew-fields')) data.crew = fields.getAll('crew');
+    } else {
+      data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
+    }
   }
   const authLabel = form.querySelector('.auth-submit span');
   const originalLabel = authLabel?.textContent;

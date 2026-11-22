@@ -306,8 +306,11 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
 .ledger-panels table{min-width:430px}
 .form-grid textarea{font:inherit;min-width:0;padding:9px;border:1px solid #ddd5cc;border-radius:7px;resize:vertical}
 .field-note{font-size:12px;color:var(--muted);line-height:1.4}
-.shoot-fields{margin:0;min-width:0;padding:12px;border:1px solid var(--stroke);border-radius:9px}
-.shoot-fields legend{padding:0 5px;color:var(--muted);font-size:12px;font-weight:650}
+.shoot-fields,.shoot-time-fields{margin:0;min-width:0;padding:12px;border:1px solid var(--stroke);border-radius:9px}
+.shoot-fields legend,.shoot-time-fields legend{padding:0 5px;color:var(--muted);font-size:12px;font-weight:650}
+.shoot-time-fields .field-note{margin-top:9px}
+.task-time-fields{display:contents}
+@media(max-width:480px){.shoot-time-fields .form-grid{grid-template-columns:1fr}}
 .owner-fields{padding:0;margin:0;border:0;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .coordinates{font-size:11px;color:var(--muted)}
 .coordinates summary{cursor:pointer}
