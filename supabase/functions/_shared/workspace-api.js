@@ -179,71 +179,77 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
   async function overview(actor, now) {
     await db.transaction((store) => refreshReminders(store, now));
     const manager = actor.is_admin;
-    const employees = manager
-      ? await db.all(`SELECT ${publicEmployee} FROM employees WHERE archived = 0 ORDER BY name`)
-      : [await getEmployee(actor.id)];
-    const taskQuery = `
-      SELECT tasks.id, title, employee_id, start_at, estimate, location, category, completed_at,
-        site_latitude, site_longitude, maps_url, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone
-        ${manager ? ', client_id, income_paise' : ''}
-      FROM tasks JOIN employees ON employees.id = tasks.employee_id LEFT JOIN clients ON clients.id = tasks.client_id
-      WHERE employees.archived = 0 ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments WHERE task_id = tasks.id AND employee_id = ?)'}
-      ORDER BY completed_at IS NOT NULL, priority DESC, start_at, tasks.id
-    `;
-    const visibleTasks = await db.all(taskQuery, ...(manager ? [] : [actor.id]));
-    const crew = await db.all(`
-      SELECT task_assignments.task_id, task_assignments.employee_id, employees.name
-      FROM task_assignments JOIN employees ON employees.id = task_assignments.employee_id
-      JOIN tasks ON tasks.id = task_assignments.task_id
-      WHERE employees.archived = 0 AND tasks.category = 'Photo shoot'
-      ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments mine WHERE mine.task_id = tasks.id AND mine.employee_id = ?)'}
-      ORDER BY employees.name
-    `, ...(manager ? [] : [actor.id]));
+    const own = manager ? [] : [actor.id];
+    const employeesQuery = manager
+      ? db.all(`SELECT ${publicEmployee} FROM employees WHERE archived = 0 ORDER BY name`)
+      : getEmployee(actor.id).then((person) => [person]);
+    const adminQuery = manager ? Promise.all([
+      db.all('SELECT * FROM clients ORDER BY name'),
+      calendar && calendar.employees(db),
+      db.all('SELECT * FROM payments ORDER BY paid_on DESC, id DESC'),
+      db.all('SELECT * FROM expenses ORDER BY spent_on DESC, id DESC'),
+    ]).then(([clients, calendarFeeds, payments, expenses]) => ({
+      clients, ...(calendar ? { calendarFeeds } : {}), payments, expenses,
+    })) : {};
+    const [employees, tasks, crew, attendance, sessions, requests, openWork, office, hrState, reminders, admin] = await Promise.all([
+      employeesQuery,
+      db.all(`
+        SELECT tasks.id, title, employee_id, start_at, estimate, location, category, completed_at,
+          site_latitude, site_longitude, maps_url, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone
+          ${manager ? ', client_id, income_paise' : ''}
+        FROM tasks JOIN employees ON employees.id = tasks.employee_id LEFT JOIN clients ON clients.id = tasks.client_id
+        WHERE employees.archived = 0 ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments WHERE task_id = tasks.id AND employee_id = ?)'}
+        ORDER BY completed_at IS NOT NULL, priority DESC, start_at, tasks.id
+      `, ...own),
+      db.all(`
+        SELECT task_assignments.task_id, task_assignments.employee_id, employees.name
+        FROM task_assignments JOIN employees ON employees.id = task_assignments.employee_id
+        JOIN tasks ON tasks.id = task_assignments.task_id
+        WHERE employees.archived = 0 AND tasks.category = 'Photo shoot'
+        ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments mine WHERE mine.task_id = tasks.id AND mine.employee_id = ?)'}
+        ORDER BY employees.name
+      `, ...own),
+      db.all(`
+        SELECT attendance.* FROM attendance JOIN employees ON employees.id = attendance.employee_id
+        WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
+        ORDER BY clock_in DESC, attendance.id DESC
+      `, ...own),
+      db.all(`
+        SELECT task_sessions.* FROM task_sessions JOIN employees ON employees.id = task_sessions.employee_id
+        WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
+        ORDER BY start_at DESC
+      `, ...own),
+      db.all(`
+        SELECT work_requests.*, tasks.title FROM work_requests
+        JOIN tasks ON tasks.id = work_requests.task_id
+        JOIN employees ON employees.id = work_requests.employee_id
+        WHERE employees.archived = 0 ${manager ? '' : 'AND work_requests.employee_id = ?'}
+        ORDER BY status != 'pending', requested_at DESC
+      `, ...own),
+      manager ? [] : db.all(`
+        SELECT id, title, start_at, estimate, category FROM tasks
+        WHERE is_open = 1 AND completed_at IS NULL AND shoot_status = 'booked' AND start_at + estimate * 60000 > ?
+        ORDER BY start_at
+      `, now),
+      officeSite(),
+      hr.snapshot(actor),
+      db.all(`
+        SELECT reminders.*, tasks.title, tasks.start_at FROM reminders JOIN tasks ON tasks.id = reminders.task_id
+        JOIN task_assignments ON task_assignments.task_id = tasks.id AND task_assignments.employee_id = reminders.employee_id
+        WHERE reminders.employee_id = ? AND tasks.shoot_status = 'booked' ORDER BY sent_at DESC
+      `, actor.id),
+      adminQuery,
+    ]);
+
     const crewByTask = new Map();
     for (const { task_id, ...member } of crew) {
       if (!crewByTask.has(task_id)) crewByTask.set(task_id, []);
       crewByTask.get(task_id).push(member);
     }
-    for (const task of visibleTasks) {
+    for (const task of tasks) {
       if (task.category === 'Photo shoot') task.crew = crewByTask.get(task.id) ?? [];
     }
-    const attendance = await db.all(`
-      SELECT attendance.* FROM attendance JOIN employees ON employees.id = attendance.employee_id
-      WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
-      ORDER BY clock_in DESC, attendance.id DESC
-    `, ...(manager ? [] : [actor.id]));
-    const sessions = await db.all(`
-      SELECT task_sessions.* FROM task_sessions JOIN employees ON employees.id = task_sessions.employee_id
-      WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
-      ORDER BY start_at DESC
-    `, ...(manager ? [] : [actor.id]));
-    const requests = await db.all(`
-      SELECT work_requests.*, tasks.title FROM work_requests
-      JOIN tasks ON tasks.id = work_requests.task_id
-      JOIN employees ON employees.id = work_requests.employee_id
-      WHERE employees.archived = 0 ${manager ? '' : 'AND work_requests.employee_id = ?'}
-      ORDER BY status != 'pending', requested_at DESC
-    `, ...(manager ? [] : [actor.id]));
-    const openWork = manager ? [] : await db.all(`
-      SELECT id, title, start_at, estimate, category FROM tasks
-      WHERE is_open = 1 AND completed_at IS NULL AND shoot_status = 'booked' AND start_at + estimate * 60000 > ?
-      ORDER BY start_at
-    `, now);
-    return {
-      actor, office: await officeSite(), employees, tasks: visibleTasks, attendance, sessions, requests, openWork,
-      ...await hr.snapshot(actor),
-      reminders: await db.all(`
-        SELECT reminders.*, tasks.title, tasks.start_at FROM reminders JOIN tasks ON tasks.id = reminders.task_id
-        JOIN task_assignments ON task_assignments.task_id = tasks.id AND task_assignments.employee_id = reminders.employee_id
-        WHERE reminders.employee_id = ? AND tasks.shoot_status = 'booked' ORDER BY sent_at DESC
-      `, actor.id),
-      ...(manager ? {
-        clients: await db.all('SELECT * FROM clients ORDER BY name'),
-        ...(calendar ? { calendarFeeds: await calendar.employees(db) } : {}),
-        payments: await db.all('SELECT * FROM payments ORDER BY paid_on DESC, id DESC'),
-        expenses: await db.all('SELECT * FROM expenses ORDER BY spent_on DESC, id DESC'),
-      } : {}),
-    };
+    return { actor, office, employees, tasks, attendance, sessions, requests, openWork, ...hrState, reminders, ...admin };
   }
 
   async function signIn(req, res, body, now) {

@@ -36,6 +36,8 @@ const assets = new Map([
   ['/app-icon-192.png', ['public/app-icon-192.png', 'image/png']],
   ['/app-icon-512.png', ['public/app-icon-512.png', 'image/png']],
   ['/sign-in.webp', ['public/sign-in.webp', 'image/webp']],
+  ['/sign-in-mobile.webp', ['public/sign-in-mobile.webp', 'image/webp']],
+  ['/sign-in-logo.png', ['public/sign-in-logo.png', 'image/png']],
   ['/attendance-policy.js', ['supabase/functions/_shared/attendance-policy.js', 'text/javascript']],
   ['/studio.webp', ['public/studio.webp', 'image/webp']],
   ['/inter.woff2', ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'font/woff2']],

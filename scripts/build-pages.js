@@ -5,6 +5,7 @@ const output = new URL('../dist/', import.meta.url);
 const publicFiles = new URL('../public/', import.meta.url);
 const packages = new URL('../node_modules/', import.meta.url);
 const brandAssets = ['concept-logo.png', 'brand-mark.png'];
+const signInAssets = ['sign-in.webp', 'sign-in-mobile.webp', 'sign-in-logo.png'];
 
 function openWorkspaceView(workspace) {
   let content;
@@ -46,7 +47,8 @@ async function pagesApp() {
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${url}; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'">`;
   const assets = [
     ...brandAssets,
-    'styles.css', 'sign-in.webp', 'studio.webp', 'app.js', 'access-view.js', 'hr-views.js',
+    ...signInAssets,
+    'styles.css', 'studio.webp', 'app.js', 'access-view.js', 'hr-views.js',
     'mobile-alerts.js', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
   ];
   await Promise.all([
@@ -60,7 +62,7 @@ async function pagesApp() {
 
 async function pagesLauncher(workspace) {
   const entry = await readFile(new URL('pages.html', import.meta.url), 'utf8');
-  const assets = [...brandAssets, 'styles.css', 'sign-in.webp', ...(workspace ? [] : ['open-workspace.js', 'access-view.js'])];
+  const assets = [...brandAssets, ...signInAssets, 'styles.css', ...(workspace ? [] : ['open-workspace.js', 'access-view.js'])];
   const icons = ['key-round', 'arrow-right', ...(workspace ? [] : ['link'])];
   await Promise.all([
     ...assets.map((asset) => cp(new URL(asset, publicFiles), new URL(asset, output))),

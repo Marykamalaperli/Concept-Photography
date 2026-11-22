@@ -1,6 +1,7 @@
 node_modules/
 data/
 dist/
+lighthouse-reports/
 .env*
 supabase/.branches/
 supabase/.temp/

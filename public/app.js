@@ -1,6 +1,5 @@
 import { assignedTo, availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
 import { loginView, passwordField } from './access-view.js';
-import { createHrViews } from './hr-views.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -632,16 +631,27 @@ function notificationsPage() {
 }
 
 
-const hrViews = createHrViews({
-  actor, state: () => state, manager, e, icon, tag, heading, viewLink, empty, actionButton, time, timeInput: studioTimeInput,
-  day, today, money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render, shootEndLabel,
-});
+let hrViews;
+let hrViewsPromise;
+
+function loadHrViews() {
+  hrViewsPromise ??= import('./hr-views.js').then(({ createHrViews }) => {
+    hrViews = createHrViews({
+      actor, state: () => state, manager, e, icon, tag, heading, viewLink, empty, actionButton, time, timeInput: studioTimeInput,
+      day, today, money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render, shootEndLabel,
+    });
+  }).catch((error) => {
+    hrViewsPromise = undefined;
+    throw error;
+  });
+  return hrViewsPromise;
+}
 
 const pages = {
-  dashboard, team: teamPage, schedule: schedulePage, 'shoot-calendar': hrViews.shootCalendar,
-  'task-board': hrViews.taskBoard, 'work-log': hrViews.workLog, leave: hrViews.leave, payroll: hrViews.payroll,
-  announcements: hrViews.announcements, clients: clientsPage, approvals: approvalsPage,
-  work: availableWorkPage, finances: financesPage, attendance: hrViews.attendance, notifications: notificationsPage,
+  dashboard, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
+  'task-board': () => hrViews.taskBoard(), 'work-log': () => hrViews.workLog(), leave: () => hrViews.leave(), payroll: () => hrViews.payroll(),
+  announcements: () => hrViews.announcements(), clients: clientsPage, approvals: approvalsPage,
+  work: availableWorkPage, finances: financesPage, attendance: () => hrViews.attendance(), notifications: notificationsPage,
 };
 
 function render() {
@@ -692,7 +702,7 @@ async function request(path, body) {
   try {
     response = await fetch(`${apiOrigin || ''}/api/${path}`, {
       headers,
-      ...(path === 'session' ? { signal: AbortSignal.timeout(12000) } : {}),
+      ...(['login', 'session', 'state'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
       ...(apiOrigin ? { credentials: 'omit' } : {}),
       ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
     });
@@ -736,7 +746,7 @@ function clearWorkspace(info) {
   clockTarget = '';
   employeeFilter = 'all';
   scheduleFilter = 'upcoming';
-  hrViews.reset();
+  hrViews?.reset();
   mobileMenu = false;
   if (dialog.open) dialog.close();
   clearTimeout(toastTimer);
@@ -746,12 +756,13 @@ function clearWorkspace(info) {
 }
 
 async function refresh({ force = false } = {}) {
-  if (!session?.actor || (loading && !force)) return;
+  if (!force && (!session?.actor || loading)) return;
   const version = ++refreshVersion;
   loading = true;
   try {
-    const fresh = await request('state');
+    const [fresh] = await Promise.all([request('state'), loadHrViews()]);
     if (version !== refreshVersion) return;
+    session = { actor: fresh.actor };
     const fingerprint = JSON.stringify(fresh);
     if (snapshot === fingerprint && !force) return;
     const oldIds = new Set(reminders().map((notice) => notice.task_id));
@@ -767,9 +778,21 @@ async function refresh({ force = false } = {}) {
   }
 }
 
+async function refreshAfterSave() {
+  try {
+    await refresh({ force: true });
+  } catch {
+    if (actor()) showToast('Saved. The page will update when the connection returns.');
+  }
+}
+
 async function loadSession() {
   const version = ++sessionVersion;
   try {
+    if (apiOrigin) {
+      if (accessToken) await refresh({ force: true });
+      return;
+    }
     const info = await request('session');
     if (version !== sessionVersion) return;
     session = info;
@@ -781,7 +804,7 @@ async function loadSession() {
     storeSessionToken(null);
     if (actor()) clearWorkspace(info);
   } catch {
-    if (version === sessionVersion) {
+    if (version === sessionVersion && (!apiOrigin || accessToken)) {
       showAuthStatus('The studio could not connect to its workspace. Retry the connection or ask your studio admin to check the deployment.');
     }
   }
@@ -1065,7 +1088,7 @@ navigator.permissions?.query({ name: 'geolocation' }).then((permission) => {
 async function mutate(button, callback) {
   if (pending) return;
   pending = true;
-  const controls = button.closest('dialog, .card-actions, .hr-clock-buttons')?.querySelectorAll('button:not(:disabled)') ?? [button];
+  const controls = button.closest('dialog, .card-actions, .hr-clock-buttons')?.querySelectorAll('button:not(:disabled, [data-action="close"])') ?? [button];
   controls.forEach((control) => { control.disabled = true; });
   try {
     await callback();
@@ -1096,8 +1119,8 @@ function clockAction(button, taskId) {
       const location = await getLocation();
       if (actorId !== employeeId) throw new Error('Sign in again to record attendance.');
       await request('attendance', { action, location, taskId, shiftId: shift?.id });
-      await refresh({ force: true });
       showToast(`Clocked ${action}. Time and location recorded.`);
+      await refreshAfterSave();
     } finally {
       button.lastChild.textContent = label;
     }
@@ -1107,9 +1130,9 @@ function clockAction(button, taskId) {
 function applyAction(button, path, body, message, close = false) {
   mutate(button, async () => {
     await request(path, body);
-    await refresh({ force: true });
-    if (close && dialog.open) dialog.close();
+    if (close && dialog.open && dialog.contains(button)) dialog.close();
     if (message) showToast(message);
+    await refreshAfterSave();
   });
 }
 
@@ -1259,7 +1282,7 @@ function toggleFields(element, shown) {
 
 document.addEventListener('change', (event) => {
   const input = event.target;
-  if (Object.hasOwn(hrViews.filters, input.id)) {
+  if (hrViews && Object.hasOwn(hrViews.filters, input.id)) {
     hrViews.filters[input.id](input.value);
     render();
     document.getElementById(input.id)?.focus();
@@ -1336,15 +1359,16 @@ document.addEventListener('submit', (event) => {
       await request(kind, data);
       if (kind === 'login') {
         history.replaceState(null, '', '#dashboard');
-        await loadSession();
+        await refresh({ force: true });
         return;
       }
-      await refresh({ force: true });
-      if (dialog.open) dialog.close();
-      if (kind === 'tasks' && !['schedule', 'shoot-calendar', 'task-board'].includes(page)) {
+      const ownsDialog = dialog.open && dialog.contains(form);
+      if (ownsDialog) dialog.close();
+      if (ownsDialog && kind === 'tasks' && !['schedule', 'shoot-calendar', 'task-board'].includes(page)) {
         location.hash = data.category === 'Photo shoot' ? '#shoot-calendar' : '#task-board';
       }
       showToast(savedMessages[kind]);
+      await refreshAfterSave();
     } catch (error) {
       errorNote.textContent = error.message;
       errorNote.hidden = false;

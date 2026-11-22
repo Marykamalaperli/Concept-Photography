@@ -27,6 +27,13 @@ jobs:
         env:
           USE_SUPABASE: '1'
           WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
+      - name: Audit the sign-in page with Lighthouse
+        run: node scripts/audit-pages.js "$RUNNER_TEMP/lighthouse-reports"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: lighthouse-sign-in-reports
+          path: ${{ runner.temp }}/lighthouse-reports/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

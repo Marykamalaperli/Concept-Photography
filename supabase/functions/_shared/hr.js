@@ -25,14 +25,15 @@ export function createHr(db, { RequestError, idValue, text, optional, paise }) {
   async function snapshot(actor) {
     const visibility = actor.is_admin ? '' : 'WHERE employee_id = ?';
     const own = actor.is_admin ? [] : [actor.id];
-    return {
-      hrSettings: await settings(db),
-      holidays: await holidays(db),
-      hrRequests: await db.all(`SELECT * FROM hr_requests ${visibility} ORDER BY requested_at DESC, id DESC`, ...own),
-      workLogs: await db.all(`SELECT * FROM work_logs ${visibility} ORDER BY day DESC, id DESC`, ...own),
-      payslips: await db.all(`SELECT * FROM payslips ${visibility} ORDER BY period DESC, id DESC`, ...own),
-      announcements: await db.all('SELECT * FROM announcements ORDER BY published_at DESC, id DESC'),
-    };
+    const [hrSettings, holidayList, hrRequests, workLogs, payslips, announcements] = await Promise.all([
+      settings(db),
+      holidays(db),
+      db.all(`SELECT * FROM hr_requests ${visibility} ORDER BY requested_at DESC, id DESC`, ...own),
+      db.all(`SELECT * FROM work_logs ${visibility} ORDER BY day DESC, id DESC`, ...own),
+      db.all(`SELECT * FROM payslips ${visibility} ORDER BY period DESC, id DESC`, ...own),
+      db.all('SELECT * FROM announcements ORDER BY published_at DESC, id DESC'),
+    ]);
+    return { hrSettings, holidays: holidayList, hrRequests, workLogs, payslips, announcements };
   }
 
   async function verifyTime(store, person, date, clockIn, clockOut, now) {
