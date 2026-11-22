@@ -53,7 +53,10 @@ if (!api || sessionStorage.getItem(workspaceSessionKey(api))) {
   loadWorkspace().catch(showLoadError);
 } else {
   form.addEventListener('focusin', () => {
-    fetch(`${api}/api/login`, { credentials: 'omit', signal: AbortSignal.timeout(4000) }).catch(() => {});
+    // Use the login headers so the browser can also cache its CORS preflight while the user types.
+    fetch(`${api}/api/login`, {
+      credentials: 'omit', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(4000),
+    }).catch(() => {});
     loadWorkspace().catch(() => {});
   }, { once: true });
   form.addEventListener('click', (event) => {

@@ -129,23 +129,25 @@ jobs:
           trap 'rm -f "$probe"' EXIT
           body=$(jq -nc --arg email "deployment-probe-$GITHUB_RUN_ID@example.invalid" \
             '{email: $email, password: "invalid-probe-password"}')
-          preparation=$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code} %{time_total}' \
-            -H "Origin: $SITE_ORIGIN" "$PROJECT_URL/functions/v1/concept-api/api/login")
-          read -r prepared prepare_elapsed <<<"$preparation"
+          login_url="$PROJECT_URL/functions/v1/concept-api/api/login"
+          timing='%{http_code} %{time_total} %{num_connects}\n'
+          measured=$(curl --silent --show-error --max-time 15 --output /dev/null --write-out "$timing" \
+            -H "Origin: $SITE_ORIGIN" -H 'Content-Type: application/json' "$login_url" \
+            --next --silent --show-error --max-time 15 --output "$probe" --write-out "$timing" \
+            -H "Origin: $SITE_ORIGIN" -H 'Content-Type: application/json' --data "$body" "$login_url")
+          mapfile -t timings <<<"$measured"
+          read -r prepared prepare_elapsed _ <<<"${timings[0]}"
+          read -r status elapsed connections <<<"${timings[1]}"
           if [[ $prepared != 204 ]]; then
             echo "::error::Hosted sign-in preparation returned HTTP $prepared."
             exit 1
           fi
-          measured=$(curl --silent --show-error --max-time 15 --output "$probe" --write-out '%{http_code} %{time_total}' \
-            -H "Origin: $SITE_ORIGIN" -H 'Content-Type: application/json' --data "$body" \
-            "$PROJECT_URL/functions/v1/concept-api/api/login")
-          read -r status elapsed <<<"$measured"
           if [[ $status != 401 ]] || ! jq -e '.error == "Invalid email or password."' "$probe" >/dev/null; then
             echo "::error::Hosted sign-in did not handle the JSON credential probe (HTTP $status)."
             exit 1
           fi
           printf 'Hosted invalid-credential response took %s seconds.\n' "$elapsed" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Hosted sign-in endpoint::Connection preparation took $prepare_elapsed seconds. Invalid-credential response took $elapsed seconds."
+          echo "::notice title=Hosted sign-in endpoint::Connection preparation took $prepare_elapsed seconds. Invalid-credential response took $elapsed seconds with $connections new connections."
       - name: Check private calendar feed routing
         shell: bash
         env:
