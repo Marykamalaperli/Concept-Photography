@@ -6,6 +6,7 @@ const derive = promisify(scrypt);
 const lifetime = 12 * 60 * 60 * 1000;
 const dummyHash = '0'.repeat(32) + ':' + '0'.repeat(128);
 const digest = (token) => createHash('sha256').update(token).digest('hex');
+export const sessionFields = ['id', 'name', 'email', 'role', 'phone', 'color', 'is_admin', 'employment_start'];
 
 export async function hashPassword(password) {
   const salt = randomBytes(16).toString('hex');
@@ -30,20 +31,23 @@ function cookie(token, maxAge, secure) {
   return `concept_session=${token}; Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`;
 }
 
-export async function createSession(db, employeeId, now, res, { bearer, secureCookies }) {
+export async function createSession(db, employee, now, res, { bearer, secureCookies }) {
   const token = randomBytes(32).toString('hex');
-  await db.run('DELETE FROM auth_sessions WHERE expires_at <= ?', now);
-  await db.run('INSERT INTO auth_sessions (token_hash, employee_id, expires_at) VALUES (?, ?, ?)', digest(token), employeeId, now + lifetime);
-  if (bearer) return { token };
+  await Promise.all([
+    db.run('DELETE FROM auth_sessions WHERE expires_at <= ?', now),
+    db.run('INSERT INTO auth_sessions (token_hash, employee_id, expires_at) VALUES (?, ?, ?)', digest(token), employee.id, now + lifetime),
+  ]);
+  const actor = Object.fromEntries(sessionFields.map((field) => [field, employee[field]]));
+  if (bearer) return { token, actor };
   res.setHeader('Set-Cookie', cookie(token, lifetime / 1000, secureCookies));
-  return { ok: true };
+  return { ok: true, actor };
 }
 
 export async function authenticatedEmployee(db, req, now, bearer) {
   const hash = sessionHash(req, bearer);
   if (!hash) return null;
   return (await db.get(`
-    SELECT employees.id, employees.name, employees.email, employees.role, employees.phone, employees.color, employees.is_admin, employees.employment_start
+    SELECT ${sessionFields.map((field) => `employees.${field}`).join(', ')}
     FROM employees JOIN auth_sessions ON employees.id = auth_sessions.employee_id
     WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ? AND employees.archived = 0
   `, hash, now)) ?? null;

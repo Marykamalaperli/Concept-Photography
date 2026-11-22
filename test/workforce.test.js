@@ -385,9 +385,11 @@ test('hosted admin access requires the linked Supabase identity', async (t) => {
   confirmed = true;
   await assert.rejects(login(), { status: 401 });
   providerId = 'linked-admin';
-  await login('Supabase admin password example');
+  const signedIn = await login('Supabase admin password example');
   const session = await call('GET', 'session');
   assert.equal(session.actor.is_admin, 1);
+  assert.deepEqual(signedIn.actor, { ...session.actor });
+  assert.equal('password_hash' in signedIn.actor, false);
   assert.equal('auth_user_id' in session.actor, false);
   confirmed = false;
   assert.deepEqual(await call('GET', 'session'), { actor: null });
@@ -422,7 +424,11 @@ test('sign-in parses streamed UTF-8 JSON with no global Buffer', async (t) => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Buffer');
   delete globalThis.Buffer;
   try {
-    assert.deepEqual(await login([bytes.slice(0, split), bytes.slice(split)]), { ok: true });
+    const signedIn = await login([bytes.slice(0, split), bytes.slice(split)]);
+    assert.equal(signedIn.ok, true);
+    assert.equal(signedIn.actor.email, email);
+    assert.equal(signedIn.actor.is_admin, 0);
+    assert.equal('password_hash' in signedIn.actor, false);
     assert.match(cookie, /concept_session=/);
     await assert.rejects(login([new Uint8Array([0xFF])]), { status: 400 });
     await assert.rejects(login([new Uint8Array(32001)]), { status: 413 });

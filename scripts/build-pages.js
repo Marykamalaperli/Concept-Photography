@@ -23,7 +23,7 @@ async function renderAccess(entry, slot, content, scriptName, apiOrigin) {
       entryPoints: [fileURLToPath(new URL(scriptName, publicFiles))],
       bundle: true, write: false, minify: true, format: 'esm',
     }).then(({ outputFiles }) => outputFiles[0].text) : '',
-    apiOrigin ? Promise.all(['app.js', 'styles.css'].map((asset) => readFile(new URL(asset, publicFiles)))) : [],
+    apiOrigin ? Promise.all(['app.js', 'styles.css'].map((asset) => readFile(new URL(asset, output)))) : [],
   ]);
   const inlineIcons = new Map(icons.map((path, index) => [path, iconData[index]]));
   const body = content.replace('./sign-in.avif', photo).replace('./sign-in-logo.png', logo)
@@ -80,13 +80,23 @@ async function pagesApp() {
   const assets = [
     ...brandAssets,
     ...signInAssets,
-    'styles.css', 'studio.webp', 'app.js', 'access-view.js', 'hr-views.js',
-    'mobile-alerts.js', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
+    'styles.css', 'studio.webp', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
   ];
   await Promise.all([
     ...assets.map((asset) => cp(new URL(asset, publicFiles), new URL(asset, output))),
-    ...['attendance-policy.js', 'hr-policy.js'].map((asset) =>
-      cp(new URL(`../supabase/functions/_shared/${asset}`, import.meta.url), new URL(asset, output))),
+    build({
+      entryPoints: [fileURLToPath(new URL('app.js', publicFiles))],
+      outfile: fileURLToPath(new URL('app.js', output)),
+      bundle: true, minify: true, format: 'esm',
+      plugins: [{
+        name: 'workspace-policy-modules',
+        setup(plugin) {
+          plugin.onResolve({ filter: /^\.\/(attendance-policy|hr-policy)\.js$/ }, ({ path }) => ({
+            path: fileURLToPath(new URL(`../supabase/functions/_shared/${path.slice(2)}`, import.meta.url)),
+          }));
+        },
+      }],
+    }),
     cp(new URL('lucide-static/icons/', packages), new URL('icons/', output), { recursive: true }),
   ]);
   return renderAccess(entry, '<!-- SIGN_IN -->', loginView(), 'start-workspace.js', url);

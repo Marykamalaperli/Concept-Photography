@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
-import { authenticatedEmployee, createSession, endSession, hashPassword, passwordMatches } from './accounts.js';
+import { authenticatedEmployee, createSession, endSession, hashPassword, passwordMatches, sessionFields } from './accounts.js';
 import { mapsLocation } from './maps.js';
 import { attendanceTransition, shootSite } from './attendance-policy.js';
 import { refreshReminders } from './reminders.js';
 import { createHr } from './hr.js';
 import { validDay } from './hr-policy.js';
 
-const publicEmployee = 'id, name, email, role, phone, color, is_admin, employment_start, password_hash IS NOT NULL AS has_login';
+const publicEmployee = `${sessionFields.join(', ')}, password_hash IS NOT NULL AS has_login`;
+const signInFields = `${sessionFields.join(', ')}, password_hash`;
 const categories = ['Photo shoot', 'Editing', 'Planning', 'Studio', 'Other'];
 const colors = ['peach', 'lavender', 'sage', 'sand', 'rose'];
 const studioDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -258,7 +259,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     const invalidCredentials = () => new RequestError('Invalid email or password.', 401);
     if (typeof body.password !== 'string' || body.password.length > 128) throw invalidCredentials();
 
-    const person = await db.get('SELECT id, is_admin, password_hash FROM employees WHERE email = ? AND archived = 0', address);
+    const person = await db.get(`SELECT ${signInFields} FROM employees WHERE email = ? AND archived = 0`, address);
     if (person?.is_admin && adminAuth) {
       const identity = await adminAuth.identity(db, person.id);
       if (!identity) throw invalidCredentials();
@@ -274,17 +275,19 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       return db.transaction(async (store) => {
         const current = await adminAuth.identity(store, person.id);
         if (current?.auth_user_id !== verifiedId || current.email !== address) throw invalidCredentials();
-        return createSession(store, person.id, now, res, sessionOptions);
+        return createSession(store, person, now, res, sessionOptions);
       });
     }
 
     if (!await passwordMatches(body.password, person?.password_hash)) throw invalidCredentials();
     // Recheck in case the employee's credentials changed during verification.
     return db.transaction(async (store) => {
-      const current = await store.get('SELECT email, password_hash FROM employees WHERE id = ? AND archived = 0', person.id);
-      if (!current || current.email !== address || current.password_hash !== person.password_hash) throw invalidCredentials();
+      const current = await store.get(`SELECT ${signInFields} FROM employees WHERE id = ? AND archived = 0`, person.id);
+      if (!current || current.email !== address || current.password_hash !== person.password_hash || current.is_admin !== person.is_admin) {
+        throw invalidCredentials();
+      }
       loginAttempts.delete(req.socket.remoteAddress);
-      return createSession(store, person.id, now, res, sessionOptions);
+      return createSession(store, current, now, res, sessionOptions);
     });
   }
 
@@ -595,6 +598,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
 
   return async function api(req, res, path) {
     const now = Date.now();
+    if (req.method === 'POST' && path === '/api/login') return signIn(req, res, await readBody(req, siteOrigin), now);
     let actor = await authenticatedEmployee(db, req, now, bearer);
     if (actor?.is_admin && adminAuth && !await adminAuth.identity(db, actor.id)) actor = null;
     if (req.method === 'GET' && path === '/api/session') return { actor };
@@ -612,7 +616,6 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     }
     if (req.method !== 'POST') throw new RequestError('Route not found.', 404);
     const body = await readBody(req, siteOrigin);
-    if (path === '/api/login') return signIn(req, res, body, now);
     if (path === '/api/logout') {
       if (actor && mobilePush && body.pushEndpoint) await mobilePush.remove(db, actor.id, body.pushEndpoint);
       return endSession(db, req, res, sessionOptions);

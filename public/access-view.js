@@ -12,6 +12,31 @@ export function workspaceAddress(value) {
 
 export const workspaceSessionKey = (api) => api && `concept-photography-session:${api}`;
 
+export async function workspaceRequest(api, path, body, token) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let response;
+  let payload;
+  try {
+    response = await fetch(`${api || ''}/api/${path}`, {
+      headers,
+      ...(['login', 'session', 'state'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
+      ...(api ? { credentials: 'omit' } : {}),
+      ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
+    });
+    payload = await response.json();
+  } catch {
+    throw new Error('The studio workspace could not be reached. Try again.');
+  }
+  if (!response.ok) {
+    const error = new Error(payload?.error || 'The workspace could not complete the request. Try again.');
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
 export function accessView({ title, description, content }) {
   return `<div class="auth-layout">
     <section class="auth-aside" aria-label="Concept Photography">

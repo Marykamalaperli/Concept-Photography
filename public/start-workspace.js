@@ -1,4 +1,4 @@
-import { togglePassword, workspaceSessionKey } from './access-view.js';
+import { togglePassword, workspaceRequest, workspaceSessionKey } from './access-view.js';
 
 const api = document.querySelector('meta[name="concept-api"]')?.content;
 const version = document.querySelector('meta[name="concept-assets"]')?.content;
@@ -26,9 +26,10 @@ function loadDashboardStyles() {
 }
 
 function loadWorkspace() {
-  loading ??= Promise.all([loadDashboardStyles(), import(appUrl.href)]).then(([, { startWorkspace }]) => {
-    startWorkspace();
+  loading ??= Promise.all([loadDashboardStyles(), import(appUrl.href)]).then(([, workspace]) => {
+    workspace.startWorkspace();
     ready = true;
+    return workspace;
   }).catch((error) => {
     loading = undefined;
     throw error;
@@ -45,7 +46,14 @@ function showLoadError() {
 if (!api || sessionStorage.getItem(workspaceSessionKey(api))) {
   loadWorkspace().catch(showLoadError);
 } else {
-  form.addEventListener('focusin', () => loadWorkspace().catch(() => {}), { once: true });
+  form.addEventListener('focusin', () => {
+    const connection = document.createElement('link');
+    connection.rel = 'preconnect';
+    connection.href = new URL(api).origin;
+    connection.crossOrigin = 'anonymous';
+    document.head.append(connection);
+    loadWorkspace().catch(() => {});
+  }, { once: true });
   form.addEventListener('click', (event) => {
     if (ready) return;
     const button = event.target.closest('[data-password-toggle]');
@@ -55,20 +63,33 @@ if (!api || sessionStorage.getItem(workspaceSessionKey(api))) {
     }
   });
   form.addEventListener('submit', async (event) => {
-    if (ready) return;
     event.preventDefault();
     event.stopPropagation();
-    const button = event.submitter;
-    if (button?.disabled) return;
-    if (button) button.disabled = true;
+    const button = event.submitter ?? form.querySelector('[type="submit"]');
+    if (button.disabled) return;
+    const notice = form.querySelector('.form-error');
+    const label = button.querySelector('span');
+    const originalLabel = label.textContent;
+    notice.hidden = true;
+    button.disabled = true;
+    label.textContent = 'Signing in…';
+    form.setAttribute('aria-busy', 'true');
     try {
-      await loadWorkspace();
-    } catch {
-      showLoadError();
-      return;
+      const credentials = Object.fromEntries(new FormData(form));
+      const [loggedIn, { finishSignIn }] = await Promise.all([
+        workspaceRequest(api, 'login', credentials),
+        loadWorkspace().catch(() => {
+          throw new Error('The workspace could not load. Refresh the page to try again.');
+        }),
+      ]);
+      await finishSignIn(loggedIn);
+    } catch (error) {
+      notice.textContent = error.message;
+      notice.hidden = false;
     } finally {
-      if (button) button.disabled = false;
+      button.disabled = false;
+      label.textContent = originalLabel;
+      form.removeAttribute('aria-busy');
     }
-    form.requestSubmit(button ?? undefined);
   });
 }

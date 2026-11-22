@@ -1,5 +1,5 @@
 import { assignedTo, availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
-import { loginView, passwordField, togglePassword, workspaceSessionKey } from './access-view.js';
+import { loginView, passwordField, togglePassword, workspaceRequest, workspaceSessionKey } from './access-view.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -69,6 +69,7 @@ let employeeFilter = 'all';
 let mobileMenu = false;
 let pending = false;
 let loading = false;
+let initialLoadError = false;
 let refreshVersion = 0;
 let displayedDate;
 let toastTimer;
@@ -660,6 +661,14 @@ function render() {
   displayedDate = today();
   shownShootIds = shootIds();
   renderChrome();
+  if (snapshot === undefined) {
+    const title = page === 'dashboard' ? (manager() ? 'Admin Dashboard' : 'My Dashboard') : e(nav().find(([key]) => key === page)[1]);
+    main.innerHTML = `<div class="page-head"><h1>${title}</h1></div><section class="panel">
+      ${initialLoadError ? `<p class="loading" role="status">Could not load the workspace data.</p>
+        ${actionButton('Retry', 'retry-dashboard', 'refresh-cw', 'secondary')}` : '<p class="loading" role="status">Loading workspace data…</p>'}
+    </section>`;
+    return;
+  }
   main.innerHTML = pages[page]();
   if (page === 'notifications') prepareMobileAlerts();
   if (dialog.open && dialog.dataset.taskId) {
@@ -672,7 +681,7 @@ function render() {
 }
 
 function tick() {
-  if (!actor()) return;
+  if (!actor() || snapshot === undefined) return;
   if (displayedDate !== today() || shownShootIds !== shootIds()) {
     render();
     return;
@@ -694,32 +703,17 @@ function storeSessionToken(token) {
 }
 
 async function request(path, body) {
-  const headers = {};
-  if (body) headers['Content-Type'] = 'application/json';
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  let response;
-  let payload;
   try {
-    response = await fetch(`${apiOrigin || ''}/api/${path}`, {
-      headers,
-      ...(['login', 'session', 'state'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
-      ...(apiOrigin ? { credentials: 'omit' } : {}),
-      ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
-    });
-    payload = await response.json();
-  } catch {
-    throw new Error('The studio workspace could not be reached. Try again.');
-  }
-  if (!response.ok) {
-    if (response.status === 401 && path !== 'login') {
+    const payload = await workspaceRequest(apiOrigin, path, body, accessToken);
+    if (path === 'logout') storeSessionToken(null);
+    return payload;
+  } catch (error) {
+    if (error.status === 401 && path !== 'login') {
       storeSessionToken(null);
       if (session?.actor) clearWorkspace({ actor: null });
     }
-    throw new Error(payload?.error || 'The workspace could not complete the request. Try again.');
+    throw error;
   }
-  if (path === 'login') storeSessionToken(payload.token);
-  if (path === 'logout') storeSessionToken(null);
-  return payload;
 }
 
 function showToast(message) {
@@ -738,6 +732,7 @@ function clearWorkspace(info) {
   sessionVersion++;
   refreshVersion++;
   loading = false;
+  initialLoadError = false;
   snapshot = undefined;
   state = initialState();
   actorId = undefined;
@@ -773,9 +768,33 @@ async function refresh({ force = false } = {}) {
     page = currentPage();
     render();
     if (!first) notifyReminders(reminders().filter((notice) => !notice.read_at && !oldIds.has(notice.task_id)));
+  } catch (error) {
+    if (version === refreshVersion && actor() && snapshot === undefined && !initialLoadError) {
+      initialLoadError = true;
+      render();
+    }
+    throw error;
   } finally {
     if (version === refreshVersion) loading = false;
   }
+}
+
+export async function finishSignIn({ actor: person, token }) {
+  sessionVersion++;
+  storeSessionToken(token);
+  history.replaceState(null, '', '#dashboard');
+  if (!person) {
+    await refresh({ force: true });
+    return;
+  }
+  session = { actor: person };
+  state = { ...initialState(), employees: [person] };
+  actorId = person.id;
+  snapshot = undefined;
+  initialLoadError = false;
+  page = 'dashboard';
+  render();
+  refresh({ force: true }).catch(() => {});
 }
 
 async function refreshAfterSave() {
@@ -1147,11 +1166,17 @@ document.addEventListener('click', (event) => {
   const { action, value } = button.dataset;
   const id = Number(button.dataset.id);
   const task = () => state.tasks.find((item) => item.id === id);
-  if (Object.hasOwn(hrViews.actions, action)) {
+  if (snapshot === undefined && !['menu', 'sign-out', 'retry-dashboard'].includes(action)) return;
+  if (hrViews && Object.hasOwn(hrViews.actions, action)) {
     hrViews.actions[action](button, value, id);
     return;
   }
   switch (action) {
+    case 'retry-dashboard':
+      initialLoadError = false;
+      render();
+      refresh({ force: true }).catch(() => {});
+      break;
     case 'menu':
       mobileMenu = !mobileMenu;
       sidebar.classList.toggle('open', mobileMenu);
@@ -1349,10 +1374,9 @@ document.addEventListener('submit', (event) => {
       authLabel.textContent = 'Signing in…';
     }
     try {
-      await request(kind, data);
+      const result = await request(kind, data);
       if (kind === 'login') {
-        history.replaceState(null, '', '#dashboard');
-        await refresh({ force: true });
+        await finishSignIn(result);
         return;
       }
       const ownsDialog = dialog.open && dialog.contains(form);
