@@ -149,7 +149,7 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
 .coordinate-fields legend{padding:0 5px;color:var(--muted);font-size:12px;font-weight:650}
 @media(max-width:380px){.coordinate-fields{grid-template-columns:1fr}}
 
-.signed-out{background:radial-gradient(ellipse at 25% 0%,#fff9ee 0%,#f3efe8 75%);font-family:Manrope,system-ui,sans-serif}
+.signed-out{background:radial-gradient(ellipse at 25% 0%,#fff9ee 0%,#f3efe8 75%);font-family:system-ui,sans-serif}
 .signed-out .sidebar,.signed-out .topbar{display:none}
 .signed-out .shell{margin:0}
 .signed-out main{
@@ -170,6 +170,7 @@ input,select{min-width:0;background:#fff;color:var(--ink);border:1px solid #ddd5
   background:#fffdfb;
   box-shadow:0 24px 65px #34211714,0 4px 16px #34211708;
 }
+.auth-layout h1,.auth-layout h2{font-family:inherit}
 .auth-aside{
   position:relative;
   display:flex;

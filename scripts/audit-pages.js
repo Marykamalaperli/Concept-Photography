@@ -11,6 +11,10 @@ const root = fileURLToPath(new URL('../dist', import.meta.url));
 const destination = resolve(process.argv[2] ?? 'lighthouse-reports');
 const prefix = '/Concept-Photography/';
 const categories = ['performance', 'accessibility', 'best-practices', 'seo'];
+const performanceMetrics = [
+  ['first-contentful-paint', 'First paint'], ['largest-contentful-paint', 'Largest paint'],
+  ['speed-index', 'Speed index'], ['total-blocking-time', 'Blocking time'], ['cumulative-layout-shift', 'Layout shift'],
+];
 const types = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml',
@@ -61,8 +65,8 @@ try {
     ], { timeout: 120_000 });
     const report = JSON.parse(await readFile(output + '.report.json', 'utf8'));
     const scores = categories.map((category) => [category, report.categories[category].score * 100]);
-    const lcp = report.audits['largest-contentful-paint'].displayValue;
-    const result = `${profile}: ${scores.map(([category, score]) => `${category} ${score}`).join(', ')}. Largest paint ${lcp}.`;
+    const metrics = performanceMetrics.map(([id, label]) => `${label} ${report.audits[id].displayValue}`).join(', ');
+    const result = `${profile}: ${scores.map(([category, score]) => `${category} ${score}`).join(', ')}. ${metrics}.`;
     console.log(result);
     if (summary) await appendFile(summary, `- ${result}\n`);
     if (scores.some(([, score]) => score !== 100)) {
