@@ -253,12 +253,23 @@ function officeCard() {
       <p>${office ? e(office.name) + ' · 100 m attendance boundary' : 'Paste a Google Maps link to enable office attendance.'}</p></div></div>
   </div>
   <div class="card-actions">${actionButton(office ? 'Edit location' : 'Set company location', 'office-location', 'map-pin', 'secondary')}
-    ${office?.maps_url ? externalLink(office.maps_url, 'Open in Google Maps') : ''}
+    ${mapLinks(office)}
   </div></section>`;
 }
 
 function externalLink(url, label) {
   return `<a class="text-link" href="${e(url)}" target="_blank" rel="noopener noreferrer">${label}${icon('external-link')}</a>`;
+}
+
+function openStreetMapUrl({ latitude, longitude }) {
+  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=17/${latitude}/${longitude}`;
+}
+
+function mapLinks(site) {
+  if (!site) return '';
+  const pin = encodeURIComponent(`${site.latitude},${site.longitude}`);
+  return `${externalLink(`https://www.google.com/maps/search/?api=1&query=${pin}`, 'Open in Google Maps')}
+    ${externalLink(openStreetMapUrl(site), 'OpenStreetMap')}`;
 }
 
 function dashboard() {
@@ -334,7 +345,7 @@ function locationCell(serialized) {
   const place = JSON.parse(serialized);
   if (place.label) return e(place.label);
   const coords = `${place.latitude.toFixed(5)}, ${place.longitude.toFixed(5)}`;
-  return `<a class="map-link" target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/?mlat=${place.latitude}&amp;mlon=${place.longitude}">${coords}</a>
+  return `<a class="map-link" target="_blank" rel="noopener noreferrer" href="${e(openStreetMapUrl(place))}">${coords}</a>
     <small>Accuracy ±${Math.round(place.accuracy)} m</small>`;
 }
 
@@ -483,7 +494,7 @@ function taskCard(task, inDialog = false) {
         manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
       <div class="inline">${icon('calendar-days')}${task.shoot_status === 'postponed' ? 'Awaiting a new date' :
         `${shortDate.format(task.start_at)} · ${time(task.start_at)}${isShoot ? ` – ${shootEndLabel(task)}` : ''} IST`}</div>
-      <div class="inline">${icon('map-pin')}${e(task.location)} ${task.maps_url ? externalLink(task.maps_url, 'Map') : ''}</div>
+      <div class="inline">${icon('map-pin')}${e(task.location)} ${mapLinks(shootSite(task))}</div>
       ${task.client_name ? `<div class="inline">${icon('contact-round')}${e(task.client_name)} · <a class="map-link" href="tel:${e(task.client_phone)}">${e(task.client_phone)}</a></div>` : ''}
       ${manager() && isShoot ? `<div class="inline">${icon('indian-rupee')}${money(task.income_paise)} expected income</div>` : ''}
     </div>
