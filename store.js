@@ -101,5 +101,86 @@ export function openStore(db) {
       throw error;
     }
   }
+  if (db.prepare('PRAGMA user_version').get().user_version < 4) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        alter table employees add column employment_start text;
+        alter table tasks add column shoot_status text not null default 'booked' check (shoot_status in ('booked', 'postponed', 'cancelled'));
+        alter table tasks add column blocked_reason text;
+
+        create table hr_settings (
+          id integer primary key check (id = 1),
+          work_start text,
+          work_end text,
+          week_off integer not null default 0 check (week_off between 0 and 6),
+          monthly_leave integer not null default 2 check (monthly_leave between 0 and 31)
+        ) STRICT;
+        insert into hr_settings (id) values (1);
+
+        create table holidays (
+          day text primary key, name text not null
+        ) STRICT;
+
+        create table hr_requests (
+          id INTEGER PRIMARY KEY,
+          employee_id integer not null references employees(id),
+          kind text not null check (kind in ('leave', 'time')),
+          day_from text not null, day_to text not null,
+          leave_type text check (leave_type in ('casual', 'half', 'unpaid')),
+          clock_in INTEGER, clock_out INTEGER,
+          reason text not null, status text not null default 'pending' check (status in ('pending', 'approved', 'declined', 'cancelled')),
+          requested_at INTEGER not null, decided_at INTEGER, decided_by integer references employees(id)
+        ) STRICT;
+        create index hr_request_employee_days on hr_requests (employee_id, day_from, day_to);
+
+        create table work_logs (
+          id INTEGER PRIMARY KEY,
+          employee_id integer not null references employees(id), day text not null,
+          note text not null, minutes integer not null check (minutes between 0 and 1440), created_at INTEGER not null
+        ) STRICT;
+        create index work_log_employee_day on work_logs (employee_id, day);
+
+        create table payslips (
+          id INTEGER PRIMARY KEY,
+          employee_id integer not null references employees(id),
+          period text not null, gross_paise INTEGER not null check (gross_paise >= 0), deductions_paise INTEGER not null,
+          note text, published_at INTEGER not null, unique (employee_id, period),
+          check (deductions_paise between 0 and gross_paise)
+        ) STRICT;
+
+        create table announcements (
+          id INTEGER PRIMARY KEY,
+          title text not null, message text not null, published_at INTEGER not null
+        ) STRICT;
+        CREATE TABLE shoot_crew (
+          task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          employee_id INTEGER NOT NULL REFERENCES employees(id),
+          PRIMARY KEY (task_id, employee_id)
+        ) STRICT;
+        CREATE INDEX shoot_crew_employee ON shoot_crew (employee_id, task_id);
+        CREATE VIEW task_assignments AS
+          SELECT id AS task_id, employee_id FROM tasks WHERE is_open = 0
+          UNION
+          SELECT shoot_crew.task_id, shoot_crew.employee_id FROM shoot_crew
+            JOIN tasks ON tasks.id = shoot_crew.task_id WHERE tasks.is_open = 0;
+
+        ALTER TABLE reminders RENAME TO old_reminders;
+        CREATE TABLE reminders (
+          task_id INTEGER NOT NULL REFERENCES tasks(id),
+          employee_id INTEGER NOT NULL REFERENCES employees(id),
+          sent_at INTEGER NOT NULL, read_at INTEGER,
+          PRIMARY KEY (task_id, employee_id)
+        ) STRICT;
+        INSERT INTO reminders SELECT task_id, employee_id, sent_at, read_at FROM old_reminders;
+        DROP TABLE old_reminders;
+        PRAGMA user_version = 4;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   return db;
 }

@@ -103,9 +103,10 @@ export function createCalendar({ projectUrl, workspaceUrl, adminAuth }) {
       if (!owner || (owner.is_admin && !await adminAuth.identity(db, owner.id))) return null;
       const assignments = await db.all(`
         SELECT tasks.id, title, location, start_at, estimate, priority, calendar_updated_at, calendar_sequence
-        FROM tasks JOIN calendar_feeds ON calendar_feeds.employee_id = tasks.employee_id
-        JOIN employees ON employees.id = tasks.employee_id
-        WHERE calendar_feeds.token_hash = ? AND employees.archived = 0 AND tasks.is_open = 0
+        FROM tasks JOIN task_assignments ON task_assignments.task_id = tasks.id
+        JOIN calendar_feeds ON calendar_feeds.employee_id = task_assignments.employee_id
+        JOIN employees ON employees.id = task_assignments.employee_id
+        WHERE calendar_feeds.token_hash = ? AND employees.archived = 0 AND tasks.is_open = 0 AND tasks.shoot_status = 'booked'
         ORDER BY start_at, tasks.id
       `, tokenHash);
       if (track) {

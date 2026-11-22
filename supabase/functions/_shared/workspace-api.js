@@ -3,8 +3,10 @@ import { authenticatedEmployee, createSession, endSession, hashPassword, passwor
 import { mapsLocation } from './maps.js';
 import { attendanceTransition, shootSite } from './attendance-policy.js';
 import { refreshReminders } from './reminders.js';
+import { createHr } from './hr.js';
+import { validDay } from './hr-policy.js';
 
-const publicEmployee = 'id, name, email, role, phone, color, is_admin, password_hash IS NOT NULL AS has_login';
+const publicEmployee = 'id, name, email, role, phone, color, is_admin, employment_start, password_hash IS NOT NULL AS has_login';
 const categories = ['Photo shoot', 'Editing', 'Planning', 'Studio', 'Other'];
 const colors = ['peach', 'lavender', 'sage', 'sand', 'rose'];
 const studioDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -149,6 +151,8 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
   }
 
+  const hr = createHr(db, { RequestError, idValue, text, optional, paise });
+
   async function getEmployee(id, store = db) {
     const employee = await store.get(`SELECT ${publicEmployee} FROM employees WHERE id = ? AND archived = 0`, idValue(id));
     if (!employee) throw new RequestError('Employee not found.', 404);
@@ -163,7 +167,8 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
 
   async function ownTask(id, actor, store = db) {
     const task = await getTask(id, store);
-    if (task.is_open || task.employee_id !== actor.id) throw new RequestError('This work has not been assigned to your account.', 403);
+    const assignment = await store.get('SELECT 1 FROM task_assignments WHERE task_id = ? AND employee_id = ?', task.id, actor.id);
+    if (!assignment) throw new RequestError('This work has not been assigned to your account.', 403);
     return task;
   }
 
@@ -179,13 +184,29 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       : [await getEmployee(actor.id)];
     const taskQuery = `
       SELECT tasks.id, title, employee_id, start_at, estimate, location, category, completed_at,
-        site_latitude, site_longitude, maps_url, priority, is_open, clients.name AS client_name, clients.phone AS client_phone
+        site_latitude, site_longitude, maps_url, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone
         ${manager ? ', client_id, income_paise' : ''}
       FROM tasks JOIN employees ON employees.id = tasks.employee_id LEFT JOIN clients ON clients.id = tasks.client_id
-      WHERE employees.archived = 0 ${manager ? '' : 'AND tasks.employee_id = ? AND tasks.is_open = 0'}
+      WHERE employees.archived = 0 ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments WHERE task_id = tasks.id AND employee_id = ?)'}
       ORDER BY completed_at IS NOT NULL, priority DESC, start_at, tasks.id
     `;
     const visibleTasks = await db.all(taskQuery, ...(manager ? [] : [actor.id]));
+    const crew = await db.all(`
+      SELECT task_assignments.task_id, task_assignments.employee_id, employees.name
+      FROM task_assignments JOIN employees ON employees.id = task_assignments.employee_id
+      JOIN tasks ON tasks.id = task_assignments.task_id
+      WHERE employees.archived = 0 AND tasks.category = 'Photo shoot'
+      ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments mine WHERE mine.task_id = tasks.id AND mine.employee_id = ?)'}
+      ORDER BY employees.name
+    `, ...(manager ? [] : [actor.id]));
+    const crewByTask = new Map();
+    for (const { task_id, ...member } of crew) {
+      if (!crewByTask.has(task_id)) crewByTask.set(task_id, []);
+      crewByTask.get(task_id).push(member);
+    }
+    for (const task of visibleTasks) {
+      if (task.category === 'Photo shoot') task.crew = crewByTask.get(task.id) ?? [];
+    }
     const attendance = await db.all(`
       SELECT attendance.* FROM attendance JOIN employees ON employees.id = attendance.employee_id
       WHERE employees.archived = 0 ${manager ? '' : 'AND employee_id = ?'}
@@ -205,15 +226,17 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     `, ...(manager ? [] : [actor.id]));
     const openWork = manager ? [] : await db.all(`
       SELECT id, title, start_at, estimate, category FROM tasks
-      WHERE is_open = 1 AND completed_at IS NULL AND start_at + estimate * 60000 > ?
+      WHERE is_open = 1 AND completed_at IS NULL AND shoot_status = 'booked' AND start_at + estimate * 60000 > ?
       ORDER BY start_at
     `, now);
     return {
       actor, office: await officeSite(), employees, tasks: visibleTasks, attendance, sessions, requests, openWork,
+      ...await hr.snapshot(actor),
       reminders: await db.all(`
         SELECT reminders.*, tasks.title, tasks.start_at FROM reminders JOIN tasks ON tasks.id = reminders.task_id
-        WHERE reminders.employee_id = ? AND tasks.employee_id = ? AND tasks.is_open = 0 ORDER BY sent_at DESC
-      `, actor.id, actor.id),
+        JOIN task_assignments ON task_assignments.task_id = tasks.id AND task_assignments.employee_id = reminders.employee_id
+        WHERE reminders.employee_id = ? AND tasks.shoot_status = 'booked' ORDER BY sent_at DESC
+      `, actor.id),
       ...(manager ? {
         clients: await db.all('SELECT * FROM clients ORDER BY name'),
         ...(calendar ? { calendarFeeds: await calendar.employees(db) } : {}),
@@ -266,23 +289,25 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     const role = text(body.role, 'job role');
     const address = email(body.email);
     const mobile = body.phone ? phone(body.phone) : null;
+    const startDate = Object.hasOwn(body, 'employmentStart') ? body.employmentStart || null : existing?.employment_start ?? null;
+    if (startDate !== null && !validDay(startDate)) throw new RequestError('Enter a valid employment start date.');
     const hash = body.password || !existing?.has_login ? await hashPassword(password(body.password)) : null;
     return db.transaction(async (store) => {
       const duplicate = await store.get('SELECT id FROM employees WHERE email = ?', address);
       if (duplicate && duplicate.id !== existing?.id) throw new RequestError('That email is already in use.', 409);
       if (existing) {
         const updated = await store.get(`
-          UPDATE employees SET name = ?, role = ?, email = ?, phone = ?, password_hash = COALESCE(?, password_hash)
+          UPDATE employees SET name = ?, role = ?, email = ?, phone = ?, employment_start = ?, password_hash = COALESCE(?, password_hash)
           WHERE id = ? RETURNING ${publicEmployee}
-        `, name, role, address, mobile, hash, existing.id);
+        `, name, role, address, mobile, startDate, hash, existing.id);
         if (hash || address !== existing.email) await store.run('DELETE FROM auth_sessions WHERE employee_id = ?', existing.id);
         return updated;
       }
       const { total: count } = await store.get('SELECT COUNT(*) AS total FROM employees WHERE archived = 0');
       return await store.get(`
-        INSERT INTO employees (name, role, email, phone, color, password_hash) VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (name, role, email, phone, employment_start, color, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?)
         RETURNING ${publicEmployee}
-      `, name, role, address, mobile, colors[count % colors.length], hash);
+      `, name, role, address, mobile, startDate, colors[count % colors.length], hash);
     });
   }
 
@@ -330,18 +355,35 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     const startAt = Date.parse(body.startAt);
     if (!Number.isFinite(startAt)) throw new RequestError('Choose a valid start date and time.');
     const isShoot = category === 'Photo shoot';
-    const isOpen = body.assignment === 'open';
-    const employee = isOpen ? actor : await getEmployee(body.employeeId);
-    if (!isOpen && !employee.has_login && !employee.is_admin) throw new RequestError('Set up this employee’s login before assigning work.');
+    if (!actor.is_admin && (isShoot || body.id)) throw new RequestError('You can add individual tasks to your own board.', 403);
+    const isOpen = actor.is_admin && body.assignment === 'open';
+
     const site = isShoot ? await siteFrom(body) : null;
     const income = isShoot ? paise(body.income, true) : 0;
     return db.transaction(async (store) => {
       const current = body.id ? await getTask(body.id, store) : null;
+      const employee = await getEmployee(isOpen || !actor.is_admin ? actor.id : body.employeeId, store);
+      if (!isOpen && !employee.has_login && !employee.is_admin) throw new RequestError('Set up this employee’s login before assigning work.');
+      const storedCrew = current && isShoot
+        ? (await store.all('SELECT employee_id FROM shoot_crew WHERE task_id = ? ORDER BY employee_id', current.id)).map((member) => member.employee_id)
+        : [];
+      const selectedCrew = isShoot && !isOpen ? body.crew ?? storedCrew : [];
+      if (!Array.isArray(selectedCrew) || selectedCrew.length > 50 || selectedCrew.some((id) => !idValue(id))) {
+        throw new RequestError('Choose up to 50 valid additional crew members.');
+      }
+      const crew = [...new Set(selectedCrew.map(idValue))].filter((id) => id !== employee.id).sort((a, b) => a - b);
+      const crewChanged = crew.join() !== storedCrew.join();
+      if (crewChanged) {
+        for (const id of crew) {
+          const member = await getEmployee(id, store);
+          if (!member.has_login && !member.is_admin) throw new RequestError('Set up each crew member’s login before assigning a shoot.');
+        }
+      }
       if (current) {
         if (current.completed_at) throw new RequestError('Completed work cannot be rescheduled.', 409);
         if (current.category !== category) throw new RequestError('Keep the original work category when editing.');
         const hasTime = await store.get('SELECT 1 FROM task_sessions WHERE task_id = ?', current.id);
-        if (hasTime && (isOpen || employee.id !== current.employee_id)) throw new RequestError('Work with recorded time cannot be reassigned.', 409);
+        if (hasTime && (isOpen || employee.id !== current.employee_id || crewChanged)) throw new RequestError('Work with recorded time cannot be reassigned.', 409);
         if (hasTime && (current.site_latitude !== (site?.latitude ?? null) || current.site_longitude !== (site?.longitude ?? null))) {
           throw new RequestError('The site cannot change after work time has been recorded.', 409);
         }
@@ -349,25 +391,36 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
         if (income < paid) throw new RequestError('Shoot income cannot be lower than payments already received.');
       }
       const clientId = isShoot ? await clientForTask(body, store) : null;
+      const status = isShoot && body.shootStatus ? body.shootStatus : current?.shoot_status ?? 'booked';
+      if (!['booked', 'postponed', 'cancelled'].includes(status)) throw new RequestError('Choose a valid booking status.');
+      if (current && isShoot && (status !== current.shoot_status || current.start_at !== startAt || current.estimate !== estimate)) {
+        await ensureShootInactive(store, current);
+      }
       const values = [title, employee.id, startAt, estimate, location, category, site?.latitude ?? null,
-        site?.longitude ?? null, site?.maps_url ?? null, clientId, income, Number(!isOpen), Number(isOpen)];
+        site?.longitude ?? null, site?.maps_url ?? null, clientId, income, Number(actor.is_admin && !isOpen), Number(isOpen), status];
       let task;
       if (current) {
         task = await store.get(`
           UPDATE tasks SET title = ?, employee_id = ?, start_at = ?, estimate = ?, location = ?, category = ?,
-            site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?
+            site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?, shoot_status = ?
           WHERE id = ? RETURNING *
         `, ...values, current.id);
-        if (current.start_at !== startAt || current.employee_id !== employee.id || isOpen) {
+        if (current.start_at !== startAt || current.employee_id !== employee.id || isOpen || status !== current.shoot_status) {
           await store.run('DELETE FROM reminders WHERE task_id = ?', task.id);
         }
         if (!isOpen) await store.run("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND status = 'pending'", now, task.id);
       } else {
         task = await store.get(`
           INSERT INTO tasks (title, employee_id, start_at, estimate, location, category, site_latitude,
-            site_longitude, maps_url, client_id, income_paise, priority, is_open)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+            site_longitude, maps_url, client_id, income_paise, priority, is_open, shoot_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
         `, ...values);
+      }
+      if (crewChanged) {
+        await store.run('DELETE FROM shoot_crew WHERE task_id = ?', task.id);
+        for (const id of crew) await store.run('INSERT INTO shoot_crew (task_id, employee_id) VALUES (?, ?)', task.id, id);
+        await store.run(`DELETE FROM reminders WHERE task_id = ?
+          AND NOT EXISTS (SELECT 1 FROM task_assignments WHERE task_id = reminders.task_id AND employee_id = reminders.employee_id)`, task.id);
       }
       await refreshReminders(store, now);
       return task;
@@ -378,7 +431,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     if (actor.is_admin) throw new RequestError('Admins can assign work from the schedule.', 403);
     return db.transaction(async (store) => {
       const task = await getTask(body.taskId, store);
-      if (!task.is_open || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
+      if (!task.is_open || task.shoot_status !== 'booked' || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
       const note = optional(body.note, 'request note', 500);
       const request = await store.get(`
         INSERT INTO work_requests (task_id, employee_id, note, requested_at, status)
@@ -396,7 +449,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       if (request?.status !== 'pending') throw new RequestError('This request is no longer pending.', 409);
       const task = await getTask(request.task_id, store);
       if (body.status === 'approved') {
-        if (!task.is_open || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
+        if (!task.is_open || task.shoot_status !== 'booked' || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
         await getEmployee(request.employee_id, store);
         await store.run('UPDATE tasks SET employee_id = ?, is_open = 0, priority = 1 WHERE id = ?', request.employee_id, task.id);
         await store.run("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND id != ? AND status = 'pending'", now, task.id, request.id);
@@ -415,6 +468,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       if (body.id && !existing) throw new RequestError('Payment not found.', 404);
       const task = await getTask(existing?.task_id ?? body.taskId, store);
       if (task.category !== 'Photo shoot') throw new RequestError('Choose a shoot to record payment.');
+      if (!existing && task.shoot_status === 'cancelled') throw new RequestError('Rebook the shoot before recording another payment.', 409);
       const { total: paid } = await store.get('SELECT COALESCE(SUM(amount_paise), 0) AS total FROM payments WHERE task_id = ?', task.id);
       if (amount > task.income_paise - paid + (existing?.amount_paise ?? 0)) {
         throw new RequestError('Payment exceeds the outstanding balance.');
@@ -429,8 +483,12 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     return db.transaction(async (store) => {
       if (command.taskId != null && command.action === 'in') await ownTask(command.taskId, { id: employeeId }, store);
       const latest = await store.get('SELECT * FROM attendance WHERE employee_id = ? ORDER BY clock_in DESC, id DESC LIMIT 1', employeeId);
-      const tasks = await store.all("SELECT * FROM tasks WHERE employee_id = ? AND category = 'Photo shoot' AND is_open = 0", employeeId);
-      const change = attendanceTransition({ command, latest, office: await officeSite(store), tasks, employeeId, now });
+      const tasks = await store.all(`
+        SELECT tasks.* FROM tasks JOIN task_assignments ON tasks.id = task_assignments.task_id
+        WHERE task_assignments.employee_id = ? AND category = 'Photo shoot'
+      `, employeeId);
+      const eligible = tasks.map((task) => ({ ...task, crew: [{ employee_id: employeeId }] }));
+      const change = attendanceTransition({ command, latest, office: await officeSite(store), tasks: eligible, employeeId, now });
       let shift = null;
       if (change?.type === 'open') {
         await store.run('UPDATE attendance SET resume_pending = 0 WHERE employee_id = ? AND resume_pending = 1', employeeId);
@@ -461,8 +519,15 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
   function taskAction(body, actor, now) {
     return db.transaction(async (store) => {
       const task = await ownTask(body.taskId, actor, store);
-      if (task.completed_at) throw new RequestError('This work is already complete.', 409);
+      if (task.completed_at || task.shoot_status !== 'booked') throw new RequestError('This work is closed.', 409);
       const active = await store.get('SELECT * FROM task_sessions WHERE employee_id = ? AND end_at IS NULL', actor.id);
+      if (body.action === 'block' || body.action === 'unblock') {
+        if (task.category === 'Photo shoot') throw new RequestError('Shoot status is managed in the calendar.');
+        const reason = body.action === 'block' ? text(body.reason, 'reason for blocking', 400) : null;
+        if (reason && active?.task_id === task.id) await store.run('UPDATE task_sessions SET end_at = ? WHERE id = ?', now, active.id);
+        return store.get('UPDATE tasks SET blocked_reason = ? WHERE id = ? RETURNING *', reason, task.id);
+      }
+      if (task.blocked_reason) throw new RequestError('Unblock this task before working on it.', 409);
       if (body.action === 'start' || (body.action === 'complete' && task.category === 'Photo shoot')) {
         if (task.category === 'Photo shoot') {
           const current = await store.get('SELECT site FROM attendance WHERE employee_id = ? AND clock_out IS NULL', actor.id);
@@ -479,10 +544,35 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
         return await store.get('UPDATE task_sessions SET end_at = ? WHERE id = ? RETURNING *', now, active.id);
       }
       if (body.action === 'complete') {
+        if (task.category === 'Photo shoot' && await store.get('SELECT 1 FROM shoot_crew WHERE task_id = ?', task.id)) {
+          throw new RequestError('The admin marks crew shoots done after the team checks out.', 409);
+        }
         if (active?.task_id === task.id) await store.run('UPDATE task_sessions SET end_at = ? WHERE id = ?', now, active.id);
         return store.get('UPDATE tasks SET completed_at = ? WHERE id = ? RETURNING *', now, task.id);
       }
       throw new RequestError('This work action is unavailable.', 409);
+    });
+  }
+
+  async function ensureShootInactive(store, task) {
+    const activeShifts = await store.all(`
+      SELECT site FROM attendance WHERE clock_out IS NULL AND
+        (employee_id = ? OR EXISTS (SELECT 1 FROM shoot_crew WHERE task_id = ? AND employee_id = attendance.employee_id))
+    `, task.employee_id, task.id);
+    const activeTask = await store.get('SELECT 1 FROM task_sessions WHERE task_id = ? AND end_at IS NULL', task.id);
+    if (activeTask || (activeShifts.some(({ site }) => site && JSON.parse(site).taskId === task.id))) {
+      throw new RequestError('The employee must clock out of this shoot before its status changes.', 409);
+    }
+  }
+
+  function finishShoot(body, now) {
+    return db.transaction(async (store) => {
+      const shoot = await getTask(body.taskId, store);
+      if (shoot.category !== 'Photo shoot' || shoot.completed_at || shoot.is_open || shoot.shoot_status !== 'booked') {
+        throw new RequestError('Only a booked, assigned shoot can be marked done.', 409);
+      }
+      await ensureShootInactive(store, shoot);
+      return store.get('UPDATE tasks SET completed_at = ? WHERE id = ? RETURNING *', now, shoot.id);
     });
   }
 
@@ -529,10 +619,15 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       await db.run('UPDATE reminders SET read_at = ? WHERE employee_id = ? AND read_at IS NULL', now, actor.id);
       return { ok: true };
     }
+    if (path === '/api/hr/requests') return hr.submit(body, actor, now);
+    if (path === '/api/hr/review') return hr.review(body, actor, now);
+    if (path === '/api/hr/work-logs') return hr.log(body, actor, now);
+    if (path === '/api/tasks') return saveTask(body, actor, now);
     adminOnly(actor);
+    if (path.startsWith('/api/hr/')) return hr.manage(path, body, now);
+    if (path === '/api/shoot-done') return finishShoot(body, now);
     if (path === '/api/employees') return saveEmployee(body);
     if (path === '/api/clients') return saveClient(body);
-    if (path === '/api/tasks') return saveTask(body, actor, now);
     if (path === '/api/request-decisions') return decideRequest(body, now);
     if (path === '/api/payments') return recordPayment(body, now);
     if (path === '/api/expenses') {

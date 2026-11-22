@@ -7,7 +7,8 @@ on:
     paths:
       - .github/workflows/supabase.yml
       - supabase/config.toml
-      - supabase/migrations/20261121040000_personal_calendars.sql
+      - supabase/migrations/**
+      - supabase/functions/**
 
 permissions:
   contents: read

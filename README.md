@@ -40,6 +40,14 @@ In the hosted workspace, open **My Schedule → Connect calendar → Create priv
 
 Each feed includes only work assigned to that employee and uses the scheduled start and duration. Calendar providers check for changes on their own refresh schedules. Keep the link private. Replacing or disabling a link stops access through the previous URL. Admins can see feed activity in the employee directory.
 
+## Employee dashboard
+
+Staff can check in and out from the dashboard, review the last 14 days or a selected month under **Attendance**, and submit corrections. Admins approve requests in **Approvals**. Approved times appear in the daily report while verified GPS records stay available. Set an employee’s employment start date to include eligible past days in absence totals.
+
+Use **Attendance → Attendance settings** to set office hours, the weekly day off, and monthly casual leave. The initial settings use Sunday as the weekly day off and award two casual days per month. Use **Leave & holidays** to enter company holidays. Employees can request full-day, half-day, and unpaid leave. Approved leave uses the configured allowance and excludes weekly days off and holidays.
+
+Admins can book shoots with a lead and optional crew in **Shoot calendar**. Each assigned person sees the booking, receives their own reminders, and can check in at the shoot. Postponed shoots stay in the rescheduling list until rebooked. Use **Tasks** for individual work, **Work log** for timers and manual notes, **Payslips** to publish private pay records, and **Announcements** to send updates inside the workspace.
+
 ## Connect the GitHub Pages site to Supabase
 
 The Pages build points to the project in [supabase/project.json](supabase/project.json). Supabase Postgres holds the shared studio records and the `concept-api` Edge Function handles account creation, sign-in, and permissions. Admins sign in through Supabase Authentication. Employees use the credentials the admin creates in the workspace. The private database schema is accessible through the function, and the website bundle contains only its public URL.

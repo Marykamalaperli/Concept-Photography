@@ -1,6 +1,6 @@
 // Shared queries use SQLite's bind notation and unqualified table names.
 // Keep the Postgres adapter independent of the pooler's session search path.
-const tables = /\b(FROM|JOIN|INTO|UPDATE)\s+(employees|office|clients|tasks|task_sessions|attendance|reminders|auth_sessions|login_limits|work_requests|payments|expenses|push_settings|push_subscriptions|push_deliveries|calendar_feeds)\b/gi;
+const tables = /\b(FROM|JOIN|INTO|UPDATE)\s+(employees|office|clients|tasks|task_sessions|attendance|reminders|auth_sessions|login_limits|work_requests|payments|expenses|push_settings|push_subscriptions|push_deliveries|calendar_feeds|hr_settings|holidays|hr_requests|work_logs|payslips|announcements|shoot_crew|task_assignments)\b/gi;
 
 function postgresStatement(query) {
   let index = 0;

@@ -44,12 +44,13 @@ async function pagesApp() {
   const meta = `  <meta name="concept-api" content="${url}/functions/v1/concept-api">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${url}; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'">`;
   const assets = [
-    'styles.css', 'sign-in.webp', 'studio.webp', 'app.js', 'access-view.js',
+    'styles.css', 'sign-in.webp', 'studio.webp', 'app.js', 'access-view.js', 'hr-views.js',
     'mobile-alerts.js', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
   ];
   await Promise.all([
     ...assets.map((asset) => cp(new URL(asset, publicFiles), new URL(asset, output))),
-    cp(new URL('../supabase/functions/_shared/attendance-policy.js', import.meta.url), new URL('attendance-policy.js', output)),
+    ...['attendance-policy.js', 'hr-policy.js'].map((asset) =>
+      cp(new URL(`../supabase/functions/_shared/${asset}`, import.meta.url), new URL(asset, output))),
     cp(new URL('lucide-static/icons/', packages), new URL('icons/', output), { recursive: true }),
   ]);
   return entry.replace('</head>', `${meta}\n</head>`).replace('<!-- SIGN_IN -->', () => loginView());

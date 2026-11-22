@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
 import { createApi } from '../supabase/functions/_shared/workspace-api.js';
+import { studioDay, dayStart, dayLength, weekday, leaveLedger, timeForDay } from '../supabase/functions/_shared/hr-policy.js';
 import { formatCalendar } from '../supabase/functions/_shared/calendar.js';
 import { hashPassword } from '../supabase/functions/_shared/accounts.js';
 import { supabaseAdminAuth } from '../supabase/functions/_shared/supabase-admin.js';
@@ -54,7 +55,7 @@ test('Maps parsing prefers the pin, handles share redirects, and rejects externa
   await assert.rejects(mapsLocation({ mapsUrl: 'https://example.net/maps?query=0,0', latitude: '0', longitude: '0' }), /Google Maps/);
 });
 
-test('admin sign-in, assignment access, approvals, ledger, and GPS survive a restart', { timeout: 15000 }, async (t) => {
+test('workspace roles, personnel requests, crew attendance, payroll, and financial records survive a restart', { timeout: 15000 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'concept-workforce-'));
   const database = join(directory, 'workforce.sqlite');
   let server;
@@ -218,6 +219,62 @@ test('admin sign-in, assignment access, approvals, ledger, and GPS survive a res
   await staff('login', credentials, 401);
   await staff('login', { ...credentials, password: 'Rotated example passphrase' });
 
+  const crew = await admin('tasks', { ...createShoot, title: 'Crew booking', crew: [colleague.id] });
+  const crewOverview = await other('state');
+  assert.deepEqual(crewOverview.tasks[0].crew.map((entry) => entry.employee_id).sort(), [photographer.id, colleague.id].sort());
+  assert.equal(crewOverview.reminders[0].task_id, crew.id);
+  assert.ok((await staff('state')).reminders.some((entry) => entry.task_id === crew.id));
+  await admin('tasks', { ...createShoot, title: crew.title, id: crew.id, shootStatus: 'postponed' });
+  await clock(other, 'in', shootCoords, { taskId: crew.id }, 403);
+  assert.equal((await other('state')).reminders.length, 0);
+  await admin('tasks', { ...createShoot, title: crew.title, id: crew.id, shootStatus: 'booked' });
+  assert.equal((await other('state')).reminders[0].task_id, crew.id);
+  const crewShift = await clock(other, 'in', shootCoords, { taskId: crew.id });
+  await admin('shoot-done', { taskId: crew.id }, 409);
+  await other('task-action', { taskId: crew.id, action: 'complete' }, 409);
+  await clock(other, 'out', shootCoords, { shiftId: crewShift.id });
+  assert.ok((await admin('shoot-done', { taskId: crew.id })).completed_at);
+
+  const personal = await staff('tasks', { ...createShoot, title: 'Edit portraits', category: 'Editing', employeeId: colleague.id });
+  assert.equal(personal.employee_id, photographer.id);
+  assert.equal(personal.priority, 0);
+  await staff('task-action', { taskId: personal.id, action: 'block', reason: 'Awaiting client selection.' });
+  await staff('task-action', { taskId: personal.id, action: 'start' }, 409);
+  await staff('task-action', { taskId: personal.id, action: 'unblock' });
+  await staff('task-action', { taskId: personal.id, action: 'start' });
+  await staff('task-action', { taskId: personal.id, action: 'complete' });
+  await other('task-action', { taskId: personal.id, action: 'block', reason: 'Unassigned.' }, 403);
+
+  const past = studioDay(dayStart(date) - dayLength);
+  const future = [1, 2, 3].map((offset) => studioDay(dayStart(date) + offset * dayLength)).filter((day) => weekday(day) !== 0);
+  await staff('hr/settings', { weekOff: 0, monthlyLeave: 3 }, 403);
+  await admin('hr/settings', { weekOff: 0, monthlyLeave: 3, workStart: '09:00', workEnd: '18:00' });
+  await admin('hr/holidays', { day: future[0], name: 'Studio closed' });
+  await staff('hr/requests', { kind: 'leave', from: future[0], to: future[0], leaveType: 'casual', reason: 'Study day' }, 400);
+  const leave = await staff('hr/requests', { kind: 'leave', from: future[1], to: future[1], leaveType: 'half', reason: 'Appointment' });
+  await staff('hr/requests', { kind: 'leave', from: future[1], to: future[1], leaveType: 'half', reason: 'Duplicate' }, 409);
+  await other('hr/review', { id: leave.id, status: 'cancelled' }, 404);
+  await staff('hr/review', { id: leave.id, status: 'approved' }, 403);
+  await admin('hr/review', { id: leave.id, status: 'approved' });
+  const adjustment = await staff('hr/requests', { kind: 'time', from: past, clockIn: '09:00', clockOut: '11:30', reason: 'Forgot to clock in.' });
+  await admin('hr/review', { id: adjustment.id, status: 'approved' });
+  const pending = await staff('hr/requests', { kind: 'time', from: past, clockIn: '08:30', reason: 'Check with lead.' });
+  await staff('hr/review', { id: pending.id, status: 'cancelled' });
+
+  await staff('hr/work-logs', { day: date, note: 'Prepared backup drive', minutes: 15, employeeId: colleague.id });
+  await admin('hr/announcements', { title: 'Office update', message: 'The studio will open late after inventory.' });
+  await staff('hr/payslips', { employeeId: colleague.id, period: date.slice(0, 7), gross: 1, deductions: 0 }, 403);
+  await admin('hr/payslips', { employeeId: photographer.id, period: date.slice(0, 7), gross: '25000.50', deductions: '1000' });
+  await admin('hr/payslips', { employeeId: colleague.id, period: date.slice(0, 7), gross: '15000', deductions: '0' });
+  const ownHr = await staff('state');
+  assert.deepEqual(ownHr.payslips.map((entry) => entry.gross_paise), [2500050]);
+  assert.equal(ownHr.workLogs[0].employee_id, photographer.id);
+  assert.equal(ownHr.announcements[0].title, 'Office update');
+  const otherHr = await other('state');
+  assert.deepEqual(otherHr.payslips.map((entry) => entry.gross_paise), [1500000]);
+  assert.deepEqual(otherHr.hrRequests, []);
+  assert.deepEqual(otherHr.workLogs, []);
+
   await stopServer();
   await startServer();
   const saved = await admin('state');
@@ -226,14 +283,46 @@ test('admin sign-in, assignment access, approvals, ledger, and GPS survive a res
   assert.equal(saved.tasks.find((task) => task.id === assigned.id).income_paise, 1200050);
   assert.deepEqual(saved.payments.map((item) => item.amount_paise), [100050]);
   assert.deepEqual(saved.expenses.map((item) => item.amount_paise), [25025]);
-  assert.equal(saved.sessions.length, 2);
+  assert.equal(saved.sessions.length, 4);
   assert.ok(saved.sessions.every((entry) => entry.end_at >= entry.start_at));
-  assert.equal(saved.attendance.length, 2);
-  assert.equal((await staff('state')).tasks.length, 2);
+  assert.equal(saved.attendance.length, 3); // Corrections preserve GPS source records.
+  assert.equal(saved.hrSettings.monthly_leave, 3);
+  assert.equal(saved.holidays[0].day, future[0]);
+  assert.equal(saved.hrRequests.find((entry) => entry.id === adjustment.id).status, 'approved');
+  assert.equal(saved.hrRequests.find((entry) => entry.id === pending.id).status, 'cancelled');
+  assert.equal(saved.payslips.length, 2);
+  assert.equal((await staff('state')).tasks.length, 4);
   await staff('logout', {});
   await staff('state', null, 401);
 });
 
+
+test('leave accounting skips holidays and preserves unpaid balances and approved time corrections', () => {
+  const settings = { week_off: 0, monthly_leave: 1 };
+  const employee = { id: 4, employment_start: '2026-11-01' };
+  const holiday = { day: '2026-11-18', name: 'Studio closed' };
+  const leave = (start, end, type) => ({
+    employee_id: employee.id, kind: 'leave', status: 'approved', day_from: start, day_to: end, leave_type: type,
+  });
+  const ledger = leaveLedger([
+    leave('2026-11-17', '2026-11-17', 'half'),
+    leave('2026-11-18', '2026-11-19', 'casual'),
+  ], employee, settings, [holiday]);
+  assert.equal(ledger.days.has(holiday.day), false);
+  assert.deepEqual(ledger.days.get('2026-11-19'), { units: 1, paid: 0.5, unpaid: 0.5 });
+  assert.deepEqual(ledger.balance('2026-11-19'), { earned: 1, used: 1, available: 0 });
+  const date = '2026-11-19';
+  const hour = 3_600_000;
+  const start = dayStart(date);
+  const correction = { clock_in: start + 8 * hour, clock_out: start + 16 * hour };
+  const records = [
+    { clock_in: start + 9 * hour, clock_out: start + 11 * hour },
+    { clock_in: start + 12 * hour, clock_out: start + 15 * hour },
+  ];
+  assert.deepEqual(timeForDay(records, date, start + dayLength, correction), {
+    in: correction.clock_in, out: correction.clock_out, total: 7 * hour,
+  });
+});
 
 test('hosted admin access requires the linked Supabase identity', async (t) => {
   const store = openStore(new DatabaseSync(':memory:'));

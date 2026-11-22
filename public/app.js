@@ -1,5 +1,6 @@
-import { availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
+import { assignedTo, availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
 import { loginView, passwordField } from './access-view.js';
+import { createHrViews } from './hr-views.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -18,22 +19,33 @@ const studioTime = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'num
 const studioDate = new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'long', day: 'numeric', month: 'long' });
 const shortDate = new Intl.DateTimeFormat('en-GB', { timeZone: zone, day: 'numeric', month: 'short' });
 const dateKey = new Intl.DateTimeFormat('sv-SE', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' });
-const tickingTime = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const adminNav = [
   ['dashboard', 'Dashboard', 'layout-dashboard'],
   ['team', 'Employees', 'users'],
   ['schedule', 'Schedule', 'calendar-days'],
+  ['shoot-calendar', 'Shoot calendar', 'camera'],
+  ['task-board', 'Tasks', 'columns-3'],
   ['clients', 'Clients', 'contact-round'],
   ['approvals', 'Approvals', 'clipboard-check'],
   ['finances', 'Finances', 'wallet'],
   ['attendance', 'Attendance', 'clock-3'],
+  ['leave', 'Leave & holidays', 'calendar-heart'],
+  ['work-log', 'Work log', 'notebook-pen'],
+  ['payroll', 'Payslips', 'receipt'],
+  ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
 ];
 const employeeNav = [
   ['dashboard', 'Dashboard', 'layout-dashboard'],
   ['schedule', 'My Schedule', 'calendar-days'],
+  ['shoot-calendar', 'Shoot calendar', 'camera'],
+  ['task-board', 'Tasks', 'columns-3'],
   ['work', 'Available Work', 'briefcase'],
   ['attendance', 'Attendance', 'clock-3'],
+  ['leave', 'Leave & holidays', 'calendar-heart'],
+  ['work-log', 'Work log', 'notebook-pen'],
+  ['payroll', 'Payslips', 'receipt'],
+  ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
 ];
 const categories = {
@@ -44,7 +56,9 @@ const categories = {
   Other: ['briefcase', 'neutral'],
 };
 
-const initialState = () => ({ office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
+const initialState = () => ({
+  hrSettings: { monthly_leave: 2, week_off: 0 }, holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [],
+  office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
 let state = initialState();
 let session = null;
 let sessionVersion = 0;
@@ -89,7 +103,7 @@ const today = () => day(Date.now());
 const tag = (label, color) => `<span class="tag ${color}"><span class="dot"></span>${label}</span>`;
 
 const nav = () => manager() ? adminNav : employeeNav;
-const pendingRequests = () => state.requests.filter((item) => item.status === 'pending');
+const pendingRequests = () => [...state.requests, ...state.hrRequests].filter((item) => item.status === 'pending');
 const shoots = () => state.tasks.filter((task) => task.category === 'Photo shoot');
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (paise) => rupees.format(paise / 100);
@@ -122,6 +136,9 @@ function elapsed(task, now = Date.now()) {
 }
 
 function taskStatus(task) {
+  if (task.shoot_status === 'postponed') return tag('Postponed', 'sand');
+  if (task.shoot_status === 'cancelled') return tag('Cancelled', 'neutral');
+  if (task.blocked_reason) return tag('Blocked', 'peach');
   if (task.is_open) return tag('Open for requests', 'sand');
   if (task.completed_at) return tag('Completed', 'sage');
   if (activeSession(task)) return tag('In progress', 'lavender');
@@ -201,7 +218,8 @@ function priority(task) {
 
 function scheduleRow(task) {
   const [symbol, tone] = categories[task.category];
-  const owner = task.is_open ? 'Available for requests' : employee(task.employee_id)?.name;
+  const lead = employee(task.employee_id)?.name;
+  const owner = task.is_open ? 'Available for requests' : task.crew?.length ? task.crew.map((member) => member.name).join(', ') : lead;
   return `<button type="button" class="schedule-row" data-action="details" data-id="${task.id}">
     <span class="schedule-time">${shortDate.format(task.start_at)}<br>${time(task.start_at)}</span>
     ${tile(symbol, tone)}
@@ -216,7 +234,7 @@ function metrics(items) {
 }
 
 function totals() {
-  const income = shoots().reduce((sum, task) => sum + task.income_paise, 0);
+  const income = shoots().reduce((sum, task) => sum + (task.shoot_status === 'cancelled' ? paidFor(task.id) : task.income_paise), 0);
   const received = state.payments.reduce((sum, payment) => sum + payment.amount_paise, 0);
   const expenses = state.expenses.reduce((sum, expense) => sum + expense.amount_paise, 0);
   return { income, received, expenses, outstanding: income - received, net: received - expenses };
@@ -238,78 +256,71 @@ function externalLink(url, label) {
 }
 
 function dashboard() {
+  if (!manager()) return hrViews.dashboard();
   const now = Date.now();
-  const upcoming = state.tasks.filter((task) => !task.completed_at && task.start_at + task.estimate * 60_000 > now);
-  const pendingCount = pendingRequests().length;
-  const { received, outstanding, expenses, net } = manager() ? totals() : {};
-  const displayedMetrics = manager()
-    ? [['Employees', state.employees.filter((person) => !person.is_admin).length, 'users', 'peach'],
-       ['Upcoming shoots', upcoming.filter((task) => task.category === 'Photo shoot').length, 'calendar-days', 'lavender'],
-       ['Pending approvals', pendingCount, 'clipboard-check', 'sand'],
-       ['Payments received', money(received), 'wallet', 'sage']]
-    : [['Priority assignments', upcoming.filter((task) => task.priority).length, 'flag', 'peach'],
-       ['Upcoming shoots', upcoming.filter((task) => task.category === 'Photo shoot').length, 'calendar-days', 'lavender'],
-       ['Requests pending', pendingCount, 'clipboard-check', 'sand'],
-       ['Completed work', state.tasks.filter((task) => task.completed_at).length, 'circle-check', 'sage']];
+  const upcoming = state.tasks.filter((task) => task.shoot_status === 'booked' && !task.completed_at && task.start_at + task.estimate * 60_000 > now);
+  const { received, outstanding, expenses, net } = totals();
   return `
-    ${heading(manager() ? 'Admin Dashboard' : 'My Dashboard', manager() ? 'Manage the studio’s people, shoots, and finances.' : 'Your assignments, requests, and attendance.', manager() ? actionButton('Schedule shoot', 'new-task', 'plus') : '')}
+    ${heading('Admin Dashboard', 'Manage the studio’s people, shoots, and finances.', actionButton('Schedule shoot', 'new-shoot', 'plus'))}
     <section class="hero" aria-label="Studio overview">
       <div class="hero-date">${icon('calendar-days')} ${studioDate.format(now)}</div>
       <h2>Welcome, ${e(actor().name.split(/\s+/)[0])}</h2>
-      <p>${manager() ? 'Concept Photography studio overview' : 'Your Concept Photography schedule'}</p>
+      <p>Concept Photography studio overview</p>
     </section>
-    ${metrics(displayedMetrics)}
+    ${metrics([
+      ['Employees', state.employees.filter((person) => !person.is_admin).length, 'users', 'peach'],
+      ['Upcoming shoots', upcoming.filter((task) => task.category === 'Photo shoot').length, 'calendar-days', 'lavender'],
+      ['Pending approvals', pendingRequests().length, 'clipboard-check', 'sand'],
+      ['Payments received', money(received), 'wallet', 'sage'],
+    ])}
     <div class="dashboard-grid">
       <section class="panel">
-        <div class="panel-head"><div><h2>${manager() ? 'Upcoming schedule' : 'My priority schedule'}</h2><p>Assigned work appears first.</p></div>${viewLink('schedule', 'View schedule')}</div>
-        ${upcoming.length ? upcoming.slice(0, 5).map(scheduleRow).join('') : empty(manager() ? 'No upcoming shoots or tasks. Schedule a shoot to get started.' : 'Your assigned shoots and tasks will appear here.')}
+        <div class="panel-head"><div><h2>Upcoming schedule</h2><p>Assigned work appears first.</p></div>${viewLink('schedule', 'View schedule')}</div>
+        ${upcoming.length ? upcoming.slice(0, 5).map(scheduleRow).join('') : empty('No upcoming shoots or tasks.')}
       </section>
-      <div class="stack">${manager() ? officeCard() : clockCard()}
-        ${manager() ? `<section class="panel">
+      <div class="stack">${officeCard()}
+        <section class="panel">
           <div class="panel-head"><div><h2>Finance overview</h2><p>All transactions recorded to date</p></div>${viewLink('finances', 'View finances')}</div>
           <dl class="balance-list"><div><dt>Pending payments</dt><dd>${money(outstanding)}</dd></div>
           <div><dt>Expenses</dt><dd>${money(expenses)}</dd></div><div><dt>Cash profit</dt><dd>${money(net)}</dd></div></dl>
-        </section>` : ''}
+        </section>
       </div>
     </div>`;
 }
+
 function clockCard() {
   const shift = shiftFor(actorId);
   const last = latestShift();
-  const shiftTime = shift?.clock_in ?? last?.clock_out;
   const boundSite = shift?.site ? JSON.parse(shift.site) : state.office;
   const sites = checkInShoots();
   if (clockTarget && !sites.some((task) => String(task.id) === clockTarget)) clockTarget = '';
   if (!clockTarget && !state.office && sites.length) clockTarget = String(sites[0].id);
-  const canClock = Boolean(shift ? boundSite : state.office || sites.length);
-  return `<section class="panel">
-    <div class="panel-head">
-      <div><h2>Time Clock</h2><p>${actor() ? e(actor().name) : ''}</p></div>
-      ${shift ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral')}
-    </div>
-    <div class="clock-body">
-      <div class="clock-face" id="clock-face"></div>
-      <div class="clock-date" id="clock-date"></div>
+  const canClockIn = !shift && Boolean(state.office || sites.length);
+  const canClockOut = Boolean(shift && boundSite);
+  const officeHours = hrViews.officeHours();
+  const clockButton = (label, symbol, available) => available ? actionButton(label, 'clock', symbol) :
+    `<button type="button" class="btn secondary" disabled>${icon(symbol)}${label}</button>`;
+  return `<section class="panel hr-panel hr-clock">
+    <header class="hr-panel-head"><h2>Time clock</h2>${shift ? tag('Checked in', 'sage') : tag('Checked out', 'neutral')}</header>
+    <div class="hr-panel-body">
+      <p class="hr-time-label">Today’s hours</p><div class="hr-timer" id="today-hours">${hrViews.todayClock()}</div>
       ${!shift && sites.length ? `<label class="clock-site">Check-in site
         <select id="clock-target">
-          ${state.office ? `<option value="">${e(state.office.name)}</option>` : ''}
+          ${state.office ? '<option value="">' + e(state.office.name) + '</option>' : ''}
           ${sites.map((task) => `<option value="${task.id}" ${String(task.id) === clockTarget ? 'selected' : ''}>${e(task.title)} · ${e(task.location)}</option>`).join('')}
         </select></label>` : ''}
-      ${(shift || !sites.length) && boundSite ? `<p class="bound-site">${icon('map-pin')}${e(boundSite.name)}</p>` : ''}
-      ${canClock ? actionButton(shift ? 'Clock Out' : 'Clock In', 'clock', shift ? 'log-out' : 'log-in') : ''}
-      <p class="location-note">${icon('map-pin')}${canClock ? `GPS must verify you are within ${fenceRadius} m of the work site` : 'No check-in site is available. Ask your studio manager.'}</p>
+      ${(shift || !sites.length) && boundSite ? `<p class="hr-clock-site">${icon('map-pin')}${e(boundSite.name)}</p>` : ''}
+      <div class="hr-clock-buttons">${clockButton('Check in', 'log-in', canClockIn)}${clockButton('Check out', 'log-out', canClockOut)}</div>
+      ${officeHours ? `<p class="hr-muted">${officeHours}</p>` : ''}
+      <p class="hr-muted">${canClockIn || canClockOut ? `GPS verification within ${fenceRadius} m is required.` : 'No check-in site is available.'}</p>
       <p class="location-watch" id="location-watch" role="status" hidden></p>
       ${(shift?.site || last?.resume_pending) && !permissionGranted ? actionButton('Enable location tracking', 'enable-location', 'locate-fixed', 'secondary') : ''}
-    </div>
-    ${last ? `<div class="clock-summary">
-      <div><small>${shift ? 'Clocked in at' : 'Last clock-out'}</small><strong>${shortDate.format(shiftTime)} · ${time(shiftTime)}</strong></div>
-      <div><small>${shift ? 'Current shift' : 'Last shift'}</small><strong ${shift ? `data-shift-start="${shift.clock_in}"` : ''}>${duration((last.clock_out ?? Date.now()) - last.clock_in)}</strong></div>
-    </div>` : ''}
-    ${manager() || last?.resume_pending ? `<div class="clock-tools">
-      ${manager() ? actionButton('Office location', 'office-location', 'settings', 'secondary') : ''}
-      ${last?.resume_pending ? actionButton('Cancel auto return', 'cancel-return', 'x', 'secondary') : ''}
-    </div>` : ''}
-  </section>`;
+      ${!shift ? hrViews.timeRequestButton(today(), 'Request a time change') : ''}
+      ${manager() || last?.resume_pending ? `<div class="clock-tools">
+        ${manager() ? actionButton('Office location', 'office-location', 'map-pin', 'secondary') + actionButton('Attendance settings', 'hr-settings', 'settings', 'secondary') : ''}
+        ${last?.resume_pending ? actionButton('Cancel auto return', 'cancel-return', 'x', 'secondary') : ''}
+      </div>` : ''}
+    </div></section>`;
 }
 
 function locationCell(serialized) {
@@ -361,7 +372,7 @@ function teamPage() {
     person.has_login ? tag('Login set', 'sage') : tag('Credentials needed', 'sand'),
     ...(state.calendarFeeds ? [calendarFeedStatus(person.id)] : []),
     shiftFor(person.id) ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral'),
-    state.tasks.filter((task) => task.employee_id === person.id && !task.completed_at && !task.is_open).length,
+    state.tasks.filter((task) => assignedTo(task, person.id) && !task.completed_at && task.shoot_status === 'booked').length,
     actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id),
   ]);
   return `${heading('Employees', 'Manage employee profiles and sign-in credentials.', actionButton('Add employee', 'new-employee', 'user-plus'))}
@@ -371,14 +382,15 @@ function teamPage() {
 function schedulePage() {
   const now = Date.now();
   const filtered = state.tasks.filter((task) => {
-    if (employeeFilter !== 'all' && (task.employee_id !== Number(employeeFilter) || task.is_open)) return false;
+    if (employeeFilter !== 'all' && !assignedTo(task, Number(employeeFilter))) return false;
     if (scheduleFilter === 'today') return day(task.start_at) === day(now);
-    if (scheduleFilter === 'upcoming') return !task.completed_at && task.start_at + task.estimate * 60_000 > now;
+    if (scheduleFilter === 'upcoming') return task.shoot_status === 'booked' && !task.completed_at && task.start_at + task.estimate * 60_000 > now;
     if (scheduleFilter === 'completed') return Boolean(task.completed_at);
     return true;
   });
   const options = [['upcoming', 'Upcoming'], ['today', 'Today'], ['all', 'All work'], ['completed', 'Completed']];
   const actions = `<div class="card-actions schedule-actions">
+    ${viewLink('shoot-calendar', 'Shoot calendar')}
     ${apiOrigin ? actionButton('Connect calendar', 'calendar-open', 'calendar-plus', 'secondary') : ''}
     ${manager() ? actionButton('Schedule shoot', 'new-task', 'plus') : ''}
   </div>`;
@@ -430,12 +442,15 @@ dialog.addEventListener('close', () => {
 });
 
 function workControls(task) {
-  if ((manager() && task.employee_id !== actorId) || task.is_open) return '';
+  if (!assignedTo(task, actorId) || task.shoot_status !== 'booked') return '';
+  if (task.blocked_reason) {
+    return `<button type="button" class="btn secondary" data-action="task-timer" data-value="unblock" data-id="${task.id}">${icon('unlock')}Unblock task</button>`;
+  }
   if (task.category === 'Photo shoot') {
     const shift = shiftFor(actorId);
     const atShoot = shift?.site && JSON.parse(shift.site).taskId === task.id;
     if (atShoot) {
-      const complete = task.completed_at ? '' : '<button type="button" class="btn secondary" data-action="task-timer" data-value="complete" data-id="' + task.id + '">Mark complete</button>';
+      const complete = task.completed_at || task.crew?.length > 1 ? '' : '<button type="button" class="btn secondary" data-action="task-timer" data-value="complete" data-id="' + task.id + '">Mark complete</button>';
       return actionButton('Clock out of shoot', 'clock', 'log-out', 'primary', task.id) + complete;
     }
     if (task.completed_at) return '';
@@ -448,7 +463,8 @@ function workControls(task) {
   const active = activeSession(task);
   return `<button type="button" class="btn primary" data-action="task-timer" data-value="${active ? 'pause' : 'start'}" data-id="${task.id}">
     ${icon(active ? 'pause' : 'play')}${active ? 'Pause timer' : 'Start timer'}</button>
-    <button type="button" class="btn secondary" data-action="task-timer" data-value="complete" data-id="${task.id}">Mark complete</button>`;
+    <button type="button" class="btn secondary" data-action="task-timer" data-value="complete" data-id="${task.id}">Mark complete</button>
+    ${actionButton('Block task', 'block-task', 'octagon-alert', 'secondary', task.id)}`;
 }
 
 function taskCard(task, inDialog = false) {
@@ -457,18 +473,23 @@ function taskCard(task, inDialog = false) {
     ${inDialog ? '' : `<div class="panel-head"><div><h2>${e(task.title)}</h2><p>${e(task.category)}</p></div>
       <div class="row-tags">${priority(task)}${taskStatus(task)}</div></div>`}
     <div class="task-details">
-      ${manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
-      <div class="inline">${icon('calendar-days')}${shortDate.format(task.start_at)} · ${time(task.start_at)} IST</div>
+      ${task.crew?.length ? `<div class="inline">${icon('users')}${e(task.crew.map((member) => member.name).join(', '))}</div>` :
+        manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
+      <div class="inline">${icon('calendar-days')}${task.shoot_status === 'postponed' ? 'Awaiting a new date' :
+        `${shortDate.format(task.start_at)} · ${time(task.start_at)} IST`}</div>
       <div class="inline">${icon('map-pin')}${e(task.location)} ${task.maps_url ? externalLink(task.maps_url, 'Map') : ''}</div>
       ${task.client_name ? `<div class="inline">${icon('contact-round')}${e(task.client_name)} · <a class="map-link" href="tel:${e(task.client_phone)}">${e(task.client_phone)}</a></div>` : ''}
       ${manager() && isShoot ? `<div class="inline">${icon('indian-rupee')}${money(task.income_paise)} expected income</div>` : ''}
     </div>
+    ${task.blocked_reason ? `<p class="hr-task-note"><strong>Blocked</strong><br>${e(task.blocked_reason)}</p>` : ''}
     <div class="task-times">
       <div><small>Scheduled duration</small><strong>${duration(task.estimate * 60_000)}</strong></div>
-      <div><small>Time tracked</small><strong ${activeSession(task) ? `data-elapsed="${task.id}"` : ''}>${elapsed(task)}</strong></div>
+      <div><small>${manager() && task.crew?.length > 1 ? 'Crew time tracked' : 'Time tracked'}</small><strong ${activeSession(task) ? `data-elapsed="${task.id}"` : ''}>${elapsed(task)}</strong></div>
     </div>
     <div class="card-actions">${workControls(task)}
       ${manager() && !task.completed_at ? actionButton('Edit schedule', 'edit-task', 'pencil', 'secondary', task.id) : ''}
+      ${manager() && isShoot && !task.completed_at && !task.is_open && task.shoot_status === 'booked'
+        ? actionButton('Mark shoot done', 'shoot-done', 'circle-check', 'secondary', task.id) : ''}
     </div>
   </article>`;
 }
@@ -496,8 +517,10 @@ function approvalsPage() {
     item.status === 'pending' ? `<div class="card-actions">${actionButton('Approve', 'approve-request', 'check', 'primary', item.id)}
       ${actionButton('Decline', 'decline-request', 'x', 'secondary', item.id)}</div>` : '—',
   ]);
-  return `${heading('Approvals', 'Review requests to take on open work. Approval assigns the shoot to the employee.')}
-    <section class="panel">${rows.length ? table('Work requests', ['Work', 'Employee', 'Request note', 'Requested', 'Status', 'Actions'], rows) : empty('Employee requests for open work will appear here.')}</section>`;
+  return `${heading('Approvals', 'Review work, leave, and attendance requests from employees.')}
+    <section class="panel"><div class="panel-head"><h2>Work requests</h2></div>
+      ${rows.length ? table('Work requests', ['Work', 'Employee', 'Request note', 'Requested', 'Status', 'Actions'], rows) : empty('Employee requests for open work will appear here.')}</section>
+    ${hrViews.approvals()}`;
 }
 
 function availableWorkPage() {
@@ -521,10 +544,11 @@ function financesPage() {
   const totalsToDate = totals();
   const rows = shoots().map((task) => {
     const paid = paidFor(task.id);
-    const due = task.income_paise - paid;
+    const cancelled = task.shoot_status === 'cancelled';
+    const due = cancelled ? 0 : task.income_paise - paid;
     return [`<strong>${e(task.title)}</strong><small>${e(task.client_name || 'No client')}</small>`,
-      money(task.income_paise), money(paid), money(due),
-      due > 0 ? actionButton('Record payment', 'record-payment', 'plus', 'secondary', task.id) : tag('Settled', 'sage')];
+      money(cancelled ? paid : task.income_paise), money(paid), money(due),
+      cancelled ? tag('Cancelled', 'neutral') : due > 0 ? actionButton('Record payment', 'record-payment', 'plus', 'secondary', task.id) : tag('Settled', 'sage')];
   });
   const paymentRows = state.payments.map((entry) => [e(entry.paid_on),
     e(state.tasks.find((task) => task.id === entry.task_id)?.title), money(entry.amount_paise), e(entry.note || '—'),
@@ -546,13 +570,6 @@ function financesPage() {
     </div>`;
 }
 
-function attendancePage() {
-  return `${heading('Attendance', manager() ? 'Review clock events and GPS records across the team.' : 'Manage your clock-in and clock-out at the office or assigned shoots.')}
-    <div class="dashboard-grid attendance-page">${clockCard()}<section class="panel">
-      <div class="panel-head"><div><h2>${manager() ? 'Team attendance' : 'My attendance'}</h2></div></div>
-      ${attendanceTable(state.attendance, true)}
-    </section></div>`;
-}
 function mobileAlertControls() {
   if (!apiOrigin) return { description: 'Mobile alerts are available on the hosted workspace.' };
   if (needsHomeScreen()) return {
@@ -604,9 +621,16 @@ function notificationsPage() {
 }
 
 
+const hrViews = createHrViews({
+  actor, state: () => state, manager, e, icon, tag, heading, viewLink, empty, actionButton, time, timeInput: studioTimeInput,
+  day, today, money, duration, employee, table, clockCard, attendanceTable, sessionsFor, activeSession, entryForm, openDialog, applyAction, render,
+});
+
 const pages = {
-  dashboard, team: teamPage, schedule: schedulePage, clients: clientsPage, approvals: approvalsPage,
-  work: availableWorkPage, finances: financesPage, attendance: attendancePage, notifications: notificationsPage,
+  dashboard, team: teamPage, schedule: schedulePage, 'shoot-calendar': hrViews.shootCalendar,
+  'task-board': hrViews.taskBoard, 'work-log': hrViews.workLog, leave: hrViews.leave, payroll: hrViews.payroll,
+  announcements: hrViews.announcements, clients: clientsPage, approvals: approvalsPage,
+  work: availableWorkPage, finances: financesPage, attendance: hrViews.attendance, notifications: notificationsPage,
 };
 
 function render() {
@@ -633,17 +657,8 @@ function tick() {
     return;
   }
   processLocation();
-  const shiftTime = document.querySelector('[data-shift-start]');
-  if (shiftTime) shiftTime.textContent = duration(Date.now() - Number(shiftTime.dataset.shiftStart));
-  const face = document.querySelector('#clock-face');
-  if (face) {
-    const now = Date.now();
-    const parts = tickingTime.formatToParts(now);
-    const period = parts.find((part) => part.type === 'dayPeriod').value;
-    const digits = parts.filter((part) => part.type !== 'dayPeriod').map((part) => part.value).join('').trim();
-    face.innerHTML = `${digits}<small>${period}</small>`;
-    document.querySelector('#clock-date').textContent = studioDate.format(now) + ' · IST';
-  }
+  const hours = document.querySelector('#today-hours');
+  if (hours) hours.textContent = hrViews.todayClock();
   document.querySelectorAll('[data-elapsed]').forEach((element) => {
     const task = state.tasks.find((item) => item.id === Number(element.dataset.elapsed));
     if (task) element.textContent = elapsed(task);
@@ -710,6 +725,7 @@ function clearWorkspace(info) {
   clockTarget = '';
   employeeFilter = 'all';
   scheduleFilter = 'upcoming';
+  hrViews.reset();
   mobileMenu = false;
   if (dialog.open) dialog.close();
   clearTimeout(toastTimer);
@@ -784,6 +800,7 @@ function employeeForm(person) {
     <label class="full">Full name<input name="name" autocomplete="off" required maxlength="100" value="${e(person?.name)}"></label>
     <label>Job role<input name="role" required maxlength="100" value="${e(person?.role)}"></label>
     <label>Mobile number<input name="phone" type="tel" maxlength="30" value="${e(person?.phone)}"></label>
+    <label class="full">Employment start date<input name="employmentStart" type="date" value="${e(person?.employment_start)}"></label>
     <label class="full">Sign-in email<input name="email" type="email" autocomplete="off" required maxlength="254" value="${e(person?.email)}"></label>
     ${passwordField({
       id: 'employee-password',
@@ -824,27 +841,39 @@ function locationForm() {
   `, 'Save location'));
 }
 
-function taskForm(task) {
-  const category = task?.category || 'Photo shoot';
+function taskForm(task, type = 'all') {
+  const isBoard = type === 'board';
+  const self = !manager();
+  const category = task?.category || (isBoard ? 'Editing' : 'Photo shoot');
   const isShoot = category === 'Photo shoot';
   const isOpen = Boolean(task?.is_open);
   const employees = state.employees.filter((person) => person.has_login || person.is_admin);
   const staff = employees.filter((person) => !person.is_admin);
   const selected = (isOpen ? null : task?.employee_id) ?? staff[0]?.id ?? actorId;
   const clientId = task?.client_id;
-  openDialog(task ? 'Edit schedule' : 'Schedule shoot', 'Direct assignments are marked as priority on the employee’s schedule.', entryForm('tasks', `
+  openDialog(task ? 'Edit schedule' : isBoard ? (self ? 'Add task' : 'Assign task') : 'Schedule shoot',
+    self ? 'This task will appear on your board.' : 'Direct assignments are marked as priority on the employee’s schedule.', entryForm('tasks', `
     ${task ? `<input type="hidden" name="id" value="${task.id}"><input type="hidden" name="category" value="${e(category)}">` : ''}
     <label class="full">Shoot or task name<input name="title" required maxlength="100" value="${e(task?.title)}"></label>
-    ${!task ? `<label>Work type<select name="category">${Object.keys(categories).map((name) => `<option>${name}</option>`).join('')}</select></label>` : ''}
-    <label>Assignment<select name="assignment"><option value="assigned">Assign directly</option><option value="open" ${isOpen ? 'selected' : ''}>Open for employee requests</option></select></label>
-    <label class="full assignee" ${isOpen ? 'hidden' : ''}>Assigned employee<select name="employeeId" required ${isOpen ? 'disabled' : ''}>
-      ${[...staff, ...employees.filter((person) => person.is_admin)].map((person) => `<option value="${person.id}" ${person.id === selected ? 'selected' : ''}>${e(person.name)}</option>`).join('')}</select></label>
+    ${!task ? type === 'shoot' ? '<input type="hidden" name="category" value="Photo shoot">' :
+      `<label>Work type<select name="category">${Object.keys(categories).filter((name) => !isBoard || name !== 'Photo shoot').map((name) => `<option>${name}</option>`).join('')}</select></label>` : ''}
+    ${self ? '' : `<label>Assignment<select name="assignment"><option value="assigned">Assign directly</option><option value="open" ${isOpen ? 'selected' : ''}>Open for employee requests</option></select></label>
+    <label class="full assignee" ${isOpen ? 'hidden' : ''}>Assigned employee or shoot lead<select name="employeeId" required ${isOpen ? 'disabled' : ''}>
+      ${[...staff, ...employees.filter((person) => person.is_admin)].map((person) => `<option value="${person.id}" ${person.id === selected ? 'selected' : ''}>${e(person.name)}</option>`).join('')}</select></label>`}
     <label>Scheduled date<input name="startDate" type="date" required value="${task ? day(task.start_at) : today()}"></label>
     <label>Scheduled time (IST)<input name="startTime" type="time" required value="${task ? studioTimeInput.format(task.start_at) : ''}"></label>
     <label>Duration in minutes<input name="estimate" type="number" required min="1" max="1440" value="${task?.estimate ?? 60}"></label>
     <label>Location name<input name="location" required maxlength="100" value="${e(task?.location)}"></label>
     <fieldset class="full shoot-fields" ${isShoot ? '' : 'hidden disabled'}><legend>Shoot and client details</legend>
       <div class="form-grid">
+        <label class="full">Booking status<select name="shootStatus">${['booked', 'postponed', 'cancelled'].map((item) =>
+          `<option value="${item}" ${item === task?.shoot_status ? 'selected' : ''}>${item[0].toUpperCase() + item.slice(1)}${item === 'postponed' ? ' · date to be confirmed' : ''}</option>`).join('')}</select></label>
+        ${!self && employees.length > 1 ? `<fieldset class="full crew-fields" ${isOpen ? 'hidden disabled' : ''}><legend>Additional shoot crew</legend>
+          <div class="hr-crew-options">${employees.filter((person) => person.id !== selected).map((person) =>
+            `<label><input type="checkbox" name="crew" value="${person.id}"
+              ${task?.crew?.some((member) => member.employee_id === person.id) ? 'checked' : ''}>${e(person.name)}</label>`).join('')}
+            <label hidden><input type="checkbox" name="crew" value="${selected}" disabled>${e(employee(selected)?.name)}</label>
+          </div></fieldset>` : ''}
         <label class="full">Client<select name="clientId"><option value="">Enter owner details</option>
           ${state.clients.map((client) => `<option value="${client.id}" ${client.id === clientId ? 'selected' : ''}>${e(client.name)} · ${e(client.phone)}</option>`).join('')}</select></label>
         <fieldset class="full owner-fields" ${clientId ? 'hidden disabled' : ''}>
@@ -1013,21 +1042,24 @@ navigator.permissions?.query({ name: 'geolocation' }).then((permission) => {
 async function mutate(button, callback) {
   if (pending) return;
   pending = true;
-  button.disabled = true;
+  const controls = button.closest('dialog, .card-actions, .hr-clock-buttons')?.querySelectorAll('button:not(:disabled)') ?? [button];
+  controls.forEach((control) => { control.disabled = true; });
   try {
     await callback();
   } catch (error) {
     showToast(error.message);
   } finally {
     pending = false;
-    button.disabled = false;
+    controls.forEach((control) => { control.disabled = false; });
     updateTracking();
   }
 }
 
 const savedMessages = {
   employees: 'Employee saved.', clients: 'Client saved.', tasks: 'Schedule saved.', office: 'Company location saved.',
-  'work-requests': 'Request sent.', payments: 'Payment recorded.', expenses: 'Expense saved.',
+  'work-requests': 'Request sent.', 'hr/requests': 'Request sent.', 'hr/settings': 'Settings saved.',
+  'hr/holidays': 'Holiday saved.', 'hr/payslips': 'Payslip saved.', 'hr/announcements': 'Announcement saved.',
+  'hr/work-logs': 'Work logged.', 'task-action': 'Task blocked.', payments: 'Payment recorded.', expenses: 'Expense saved.',
 };
 
 function clockAction(button, taskId) {
@@ -1049,10 +1081,11 @@ function clockAction(button, taskId) {
   });
 }
 
-function applyAction(button, path, body, message) {
+function applyAction(button, path, body, message, close = false) {
   mutate(button, async () => {
     await request(path, body);
     await refresh({ force: true });
+    if (close && dialog.open) dialog.close();
     if (message) showToast(message);
   });
 }
@@ -1075,6 +1108,10 @@ document.addEventListener('click', (event) => {
   const { action, value } = button.dataset;
   const id = Number(button.dataset.id);
   const task = () => state.tasks.find((item) => item.id === id);
+  if (Object.hasOwn(hrViews.actions, action)) {
+    hrViews.actions[action](button, value, id);
+    return;
+  }
   switch (action) {
     case 'menu':
       mobileMenu = !mobileMenu;
@@ -1097,6 +1134,9 @@ document.addEventListener('click', (event) => {
     case 'new-client': clientForm(); break;
     case 'edit-client': clientForm(state.clients.find((client) => client.id === id)); break;
     case 'new-task': taskForm(); break;
+    case 'new-shoot': taskForm(null, 'shoot'); break;
+    case 'new-board-task': taskForm(null, 'board'); break;
+    case 'shoot-done': applyAction(button, 'shoot-done', { taskId: id }, 'Shoot marked done.'); break;
     case 'calendar-open':
       mutate(button, async () => calendarDialog(await request('calendar')));
       break;
@@ -1151,7 +1191,7 @@ document.addEventListener('click', (event) => {
     case 'clock': clockAction(button, id || Number(clockTarget) || null); break;
     case 'task-timer':
       applyAction(button, 'task-action', { taskId: id, action: value },
-        { start: 'Timer started.', pause: 'Timer paused.', complete: 'Work marked complete.' }[value]);
+        { start: 'Timer started.', pause: 'Timer paused.', complete: 'Work marked complete.', unblock: 'Task unblocked.' }[value]);
       break;
     case 'enable-location':
       mutate(button, async () => { await getLocation(); render(); });
@@ -1196,6 +1236,12 @@ function toggleFields(element, shown) {
 
 document.addEventListener('change', (event) => {
   const input = event.target;
+  if (Object.hasOwn(hrViews.filters, input.id)) {
+    hrViews.filters[input.id](input.value);
+    render();
+    document.getElementById(input.id)?.focus();
+    return;
+  }
   if (input.id === 'clock-target') clockTarget = input.value;
   if (input.id === 'schedule-employee') {
     employeeFilter = input.value;
@@ -1210,6 +1256,14 @@ document.addEventListener('change', (event) => {
     const direct = input.value !== 'open';
     form.querySelector('.assignee').hidden = !direct;
     form.elements.employeeId.disabled = !direct;
+    if (form.querySelector('.crew-fields')) toggleFields(form.querySelector('.crew-fields'), direct);
+  }
+  if (input.name === 'employeeId') {
+    form.querySelectorAll('input[name="crew"]').forEach((option) => {
+      option.disabled = option.value === input.value;
+      option.closest('label').hidden = option.disabled;
+      if (option.disabled) option.checked = false;
+    });
   }
 });
 
@@ -1229,7 +1283,10 @@ document.addEventListener('submit', (event) => {
   const errorNote = form.querySelector('.form-error');
   errorNote.hidden = true;
   const data = Object.fromEntries(new FormData(form));
-  if (kind === 'tasks') data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
+  if (kind === 'tasks') {
+    data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
+    data.crew = new FormData(form).getAll('crew');
+  }
   const authLabel = form.querySelector('.auth-submit span');
   const originalLabel = authLabel?.textContent;
   mutate(event.submitter, async () => {
@@ -1247,7 +1304,9 @@ document.addEventListener('submit', (event) => {
       }
       await refresh({ force: true });
       if (dialog.open) dialog.close();
-      if (kind === 'tasks' && page !== 'schedule') location.hash = '#schedule';
+      if (kind === 'tasks' && !['schedule', 'shoot-calendar', 'task-board'].includes(page)) {
+        location.hash = data.category === 'Photo shoot' ? '#shoot-calendar' : '#task-board';
+      }
       showToast(savedMessages[kind]);
     } catch (error) {
       errorNote.textContent = error.message;

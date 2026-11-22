@@ -43,7 +43,7 @@ export async function authenticatedEmployee(db, req, now, bearer) {
   const hash = sessionHash(req, bearer);
   if (!hash) return null;
   return (await db.get(`
-    SELECT employees.id, employees.name, employees.email, employees.role, employees.phone, employees.color, employees.is_admin
+    SELECT employees.id, employees.name, employees.email, employees.role, employees.phone, employees.color, employees.is_admin, employees.employment_start
     FROM employees JOIN auth_sessions ON employees.id = auth_sessions.employee_id
     WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ? AND employees.archived = 0
   `, hash, now)) ?? null;

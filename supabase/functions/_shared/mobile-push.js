@@ -62,11 +62,12 @@ async function claimDue(db, now) {
     await refreshReminders(store, now);
     await store.run(`
       INSERT INTO push_deliveries (task_id, employee_id, start_at, subscription_id, next_attempt_at)
-      SELECT tasks.id, tasks.employee_id, tasks.start_at, push_subscriptions.id, ?
+      SELECT tasks.id, task_assignments.employee_id, tasks.start_at, push_subscriptions.id, ?
       FROM tasks
-      JOIN employees ON employees.id = tasks.employee_id
-      JOIN push_subscriptions ON push_subscriptions.employee_id = tasks.employee_id
-      WHERE tasks.is_open = 0 AND tasks.completed_at IS NULL AND employees.archived = 0
+      JOIN task_assignments ON task_assignments.task_id = tasks.id
+      JOIN employees ON employees.id = task_assignments.employee_id
+      JOIN push_subscriptions ON push_subscriptions.employee_id = task_assignments.employee_id
+      WHERE tasks.is_open = 0 AND tasks.shoot_status = 'booked' AND tasks.completed_at IS NULL AND employees.archived = 0
         AND tasks.start_at > ? AND tasks.start_at <= ?
       ON CONFLICT (task_id, employee_id, start_at, subscription_id) DO NOTHING
     `, now, now, now + 30 * minute);
@@ -76,11 +77,12 @@ async function claimDue(db, now) {
         SELECT d.task_id, d.employee_id, d.start_at, d.subscription_id, tasks.title, push_subscriptions.endpoint,
           push_subscriptions.p256dh, push_subscriptions.auth_secret
         FROM push_deliveries d
-        JOIN tasks ON tasks.id = d.task_id AND tasks.employee_id = d.employee_id AND tasks.start_at = d.start_at
+        JOIN tasks ON tasks.id = d.task_id AND tasks.start_at = d.start_at
+        JOIN task_assignments ON task_assignments.task_id = d.task_id AND task_assignments.employee_id = d.employee_id
         JOIN employees ON employees.id = d.employee_id
         JOIN push_subscriptions ON push_subscriptions.id = d.subscription_id AND push_subscriptions.employee_id = d.employee_id
         WHERE d.sent_at IS NULL AND d.attempts < ? AND d.next_attempt_at <= ?
-          AND d.start_at > ? AND tasks.is_open = 0 AND tasks.completed_at IS NULL AND employees.archived = 0
+          AND d.start_at > ? AND tasks.is_open = 0 AND tasks.shoot_status = 'booked' AND tasks.completed_at IS NULL AND employees.archived = 0
         ORDER BY d.start_at, d.attempts, d.subscription_id
         LIMIT 50
       )

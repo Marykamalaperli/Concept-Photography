@@ -24,6 +24,8 @@ const api = createApi(db, {
 const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/styles.css', ['public/styles.css', 'text/css']],
+  ['/hr-views.js', ['public/hr-views.js', 'text/javascript']],
+  ['/hr-policy.js', ['supabase/functions/_shared/hr-policy.js', 'text/javascript']],
   ['/app.js', ['public/app.js', 'text/javascript']],
   ['/access-view.js', ['public/access-view.js', 'text/javascript']],
   ['/mobile-alerts.js', ['public/mobile-alerts.js', 'text/javascript']],

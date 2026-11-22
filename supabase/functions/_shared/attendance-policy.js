@@ -28,8 +28,12 @@ export function shootSite(task) {
   return { name: task.location, ...coordinates, taskId: task.id };
 }
 
+export function assignedTo(task, employeeId) {
+  return !task.is_open && (task.employee_id === employeeId || task.crew?.some((member) => member.employee_id === employeeId));
+}
+
 export function availableShoots(tasks, employeeId, now) {
-  return tasks.filter((task) => task.employee_id === employeeId && !task.completed_at && shootSite(task) &&
+  return tasks.filter((task) => assignedTo(task, employeeId) && (!task.shoot_status || task.shoot_status === 'booked') && !task.completed_at && shootSite(task) &&
     now >= task.start_at - 30 * minute && now < task.start_at + task.estimate * minute);
 }
 
