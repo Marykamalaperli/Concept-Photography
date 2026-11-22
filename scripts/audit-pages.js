@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,28 +53,45 @@ await once(server.listen(0, '127.0.0.1'), 'listening');
 const url = `http://127.0.0.1:${server.address().port}${prefix}`;
 const summary = process.env.GITHUB_STEP_SUMMARY;
 
+async function audit(profile, output) {
+  await run('npx', [
+    '--yes', 'lighthouse@13.6.0', url,
+    ...(profile === 'desktop' ? ['--preset=desktop'] : []),
+    '--quiet', '--no-enable-error-reporting',
+    `--only-categories=${categories.join(',')}`,
+    '--chrome-flags=--headless --no-sandbox --disable-dev-shm-usage',
+    '--output=html', '--output=json', `--output-path=${output}`,
+  ], { timeout: 120_000 });
+  return JSON.parse(await readFile(output + '.report.json', 'utf8'));
+}
+
 try {
   for (const profile of ['mobile', 'desktop']) {
     const output = join(destination, profile);
-    await run('npx', [
-      '--yes', 'lighthouse@13.6.0', url,
-      ...(profile === 'desktop' ? ['--preset=desktop'] : []),
-      '--quiet', '--no-enable-error-reporting',
-      `--only-categories=${categories.join(',')}`,
-      '--chrome-flags=--headless --no-sandbox --disable-dev-shm-usage',
-      '--output=html', '--output=json', `--output-path=${output}`,
-    ], { timeout: 120_000 });
-    const report = JSON.parse(await readFile(output + '.report.json', 'utf8'));
+    const runs = profile === 'mobile' && process.env.GITHUB_ACTIONS === 'true' ? 3 : 1;
+    const samples = [];
+    for (let index = 1; index <= runs; index++) {
+      const sample = runs === 1 ? output : `${output}-${index}`;
+      samples.push({ path: sample, report: await audit(profile, sample) });
+    }
+    const performance = samples.map(({ report }) => report.categories.performance.score * 100);
+    samples.sort((a, b) => a.report.categories.performance.score - b.report.categories.performance.score);
+    const { path, report } = samples[Math.floor(runs / 2)];
+    if (runs > 1) {
+      await Promise.all(['html', 'json'].map((ext) => copyFile(`${path}.report.${ext}`, `${output}.report.${ext}`)));
+    }
     const scores = categories.map((category) => [category, report.categories[category].score * 100]);
     const metrics = performanceMetrics.map(([id, label]) => `${label} ${report.audits[id].displayValue}`).join(', ');
-    const result = `${profile}: ${scores.map(([category, score]) => `${category} ${score}`).join(', ')}. ${metrics}.`;
+    const label = runs > 1 ? `${profile} median of ${runs} (${performance.join(', ')})` : profile;
+    const result = `${label}: ${scores.map(([category, score]) => `${category} ${score}`).join(', ')}. ${metrics}.`;
     console.log(result);
     if (summary) await appendFile(summary, `- ${result}\n`);
-    if (scores.some(([, score]) => score !== 100)) {
+    const otherScoresPass = samples.every(({ report }) => categories.slice(1).every((id) => report.categories[id].score === 1));
+    if (report.categories.performance.score !== 1 || !otherScoresPass) {
       if (summary) console.error(`::error title=Lighthouse score below 100::${result}`);
       process.exitCode = 1;
     }
-    const flagged = signInInsights.filter((id) => report.audits[id]?.score !== 1);
+    const flagged = signInInsights.filter((id) => samples.some(({ report }) => report.audits[id]?.score !== 1));
     const insightResult = flagged.length
       ? `${profile} sign-in insights still flagged: ${flagged.map((id) => report.audits[id]?.title ?? id).join(', ')}.`
       : `${profile} passed the cache lifetime, image delivery, dependency tree, and render-blocking checks.`;
