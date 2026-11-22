@@ -23,6 +23,7 @@ const api = createApi(db, {
 
 const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
+  ['/access.css', ['public/access.css', 'text/css']],
   ['/styles.css', ['public/styles.css', 'text/css']],
   ['/hr-views.js', ['public/hr-views.js', 'text/javascript']],
   ['/hr-policy.js', ['supabase/functions/_shared/hr-policy.js', 'text/javascript']],
@@ -37,7 +38,7 @@ const assets = new Map([
   ['/app-icon-192.png', ['public/app-icon-192.png', 'image/png']],
   ['/app-icon-512.png', ['public/app-icon-512.png', 'image/png']],
   ['/sign-in.webp', ['public/sign-in.webp', 'image/webp']],
-  ['/sign-in-mobile.webp', ['public/sign-in-mobile.webp', 'image/webp']],
+  ['/sign-in.avif', ['public/sign-in.avif', 'image/avif']],
   ['/sign-in-logo.png', ['public/sign-in-logo.png', 'image/png']],
   ['/attendance-policy.js', ['supabase/functions/_shared/attendance-policy.js', 'text/javascript']],
   ['/studio.webp', ['public/studio.webp', 'image/webp']],
@@ -65,7 +66,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     const source = await readFile(resolve(root, asset[0]));
-    const content = path === '/' ? source.toString('utf8').replace('<!-- SIGN_IN -->', () => loginView()) : source;
+    const content = path === '/' ? source.toString('utf8')
+      .replace('<!-- ACCESS_HEAD -->', '<link rel="stylesheet" href="./access.css">\n  <script type="module" src="./start-workspace.js"></script>')
+      .replace('<!-- SIGN_IN -->', () => loginView()) : source;
     res.writeHead(200, {
       'Content-Type': asset[1],
       'X-Content-Type-Options': 'nosniff',

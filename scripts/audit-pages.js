@@ -11,6 +11,7 @@ const root = fileURLToPath(new URL('../dist', import.meta.url));
 const destination = resolve(process.argv[2] ?? 'lighthouse-reports');
 const prefix = '/Concept-Photography/';
 const categories = ['performance', 'accessibility', 'best-practices', 'seo'];
+const signInInsights = ['cache-insight', 'image-delivery-insight', 'network-dependency-tree-insight', 'render-blocking-insight'];
 const performanceMetrics = [
   ['first-contentful-paint', 'First paint'], ['largest-contentful-paint', 'Largest paint'],
   ['speed-index', 'Speed index'], ['total-blocking-time', 'Blocking time'], ['cumulative-layout-shift', 'Layout shift'],
@@ -71,6 +72,16 @@ try {
     if (summary) await appendFile(summary, `- ${result}\n`);
     if (scores.some(([, score]) => score !== 100)) {
       if (summary) console.error(`::error title=Lighthouse score below 100::${result}`);
+      process.exitCode = 1;
+    }
+    const flagged = signInInsights.filter((id) => report.audits[id]?.score !== 1);
+    const insightResult = flagged.length
+      ? `${profile} sign-in insights still flagged: ${flagged.map((id) => report.audits[id]?.title ?? id).join(', ')}.`
+      : `${profile} passed the cache lifetime, image delivery, dependency tree, and render-blocking checks.`;
+    console.log(insightResult);
+    if (summary) await appendFile(summary, `- ${insightResult}\n`);
+    if (flagged.length) {
+      if (summary) console.error(`::error title=Lighthouse sign-in insights flagged::${insightResult}`);
       process.exitCode = 1;
     }
   }

@@ -16,10 +16,10 @@ export function accessView({ title, description, content }) {
   return `<div class="auth-layout">
     <section class="auth-aside" aria-label="Concept Photography">
       <picture class="auth-photo">
-        <source media="(max-width: 700px)" srcset="./sign-in-mobile.webp">
-        <img src="./sign-in.webp" width="1122" height="1402" alt="" fetchpriority="high">
+        <source type="image/avif" srcset="./sign-in.avif">
+        <img src="./sign-in.webp" width="600" height="750" alt="" fetchpriority="high">
       </picture>
-      <img class="auth-brand" src="./sign-in-logo.png" width="148" height="211" alt="" fetchpriority="low">
+      <img class="auth-brand" src="./sign-in-logo.png" width="108" height="154" alt="" fetchpriority="low">
       <div class="auth-aside-copy"><h2>Concept Photography</h2></div>
     </section>
     <section class="auth-content" aria-labelledby="access-title">

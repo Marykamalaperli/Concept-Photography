@@ -77,7 +77,7 @@ The local Node app uses SQLite. To host it separately, serve it behind HTTPS wit
 
 ## Verify
 
-GitHub Pages builds publish desktop and mobile Lighthouse reports as the **lighthouse-sign-in-reports** artifact. Each audited sign-in build must score 100 in performance, accessibility, best practices, and SEO before deployment.
+GitHub Pages builds publish desktop and mobile Lighthouse reports as the **lighthouse-sign-in-reports** artifact. Each audited sign-in build must score 100 in performance, accessibility, best practices, and SEO and pass the cache lifetime, image delivery, dependency tree, and render-blocking checks before deployment.
 
 With Chrome installed, run `USE_SUPABASE=1 npm run build:pages` and `node scripts/audit-pages.js` to write the HTML and JSON reports to `lighthouse-reports/` locally.
 

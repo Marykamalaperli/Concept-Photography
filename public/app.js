@@ -1383,8 +1383,10 @@ window.addEventListener('hashchange', () => {
   window.scrollTo(0, 0);
 });
 
-loadSession();
-setInterval(tick, 1000);
-setInterval(() => {
-  if (!pending && session?.actor) refresh().catch(() => {});
-}, 15000);
+export function startWorkspace() {
+  loadSession();
+  setInterval(tick, 1000);
+  setInterval(() => {
+    if (!pending && session?.actor) refresh().catch(() => {});
+  }, 15000);
+}

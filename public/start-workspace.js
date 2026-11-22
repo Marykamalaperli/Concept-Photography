@@ -1,12 +1,35 @@
 import { togglePassword, workspaceSessionKey } from './access-view.js';
 
 const api = document.querySelector('meta[name="concept-api"]')?.content;
+const version = document.querySelector('meta[name="concept-assets"]')?.content;
+const assetQuery = version ? `?v=${encodeURIComponent(version)}` : '';
+const appUrl = new URL(`./app.js${assetQuery}`, document.baseURI);
 const form = document.querySelector('[data-form="login"]');
 let ready = false;
 let loading;
+let dashboardStyles;
+
+function loadDashboardStyles() {
+  dashboardStyles ??= new Promise((resolve, reject) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = `./styles.css${assetQuery}`;
+    link.onload = resolve;
+    link.onerror = () => {
+      dashboardStyles = undefined;
+      link.remove();
+      reject(new Error('Workspace styles could not load.'));
+    };
+    document.head.append(link);
+  });
+  return dashboardStyles;
+}
 
 function loadWorkspace() {
-  loading ??= import('./app.js').then(() => { ready = true; }).catch((error) => {
+  loading ??= Promise.all([loadDashboardStyles(), import(appUrl.href)]).then(([, { startWorkspace }]) => {
+    startWorkspace();
+    ready = true;
+  }).catch((error) => {
     loading = undefined;
     throw error;
   });
