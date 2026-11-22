@@ -4,7 +4,7 @@ import { accessView, loginView, workspaceAddress } from '../public/access-view.j
 const output = new URL('../dist/', import.meta.url);
 const publicFiles = new URL('../public/', import.meta.url);
 const packages = new URL('../node_modules/', import.meta.url);
-const brandAssets = ['concept-logo.webp', 'brand-mark.png'];
+const brandAssets = ['concept-logo.png', 'brand-mark.png'];
 
 function openWorkspaceView(workspace) {
   let content;

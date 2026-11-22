@@ -13,9 +13,7 @@ export function workspaceAddress(value) {
 export function accessView({ title, description, content }) {
   return `<div class="auth-layout">
     <section class="auth-aside" aria-label="Concept Photography">
-      <div class="auth-brand">
-        <img src="./concept-logo.webp" width="420" height="599" alt="Concept Photography">
-      </div>
+      <img class="auth-brand" src="./concept-logo.png" width="420" height="599" alt="Concept Photography">
       <div class="auth-aside-copy"><h2>Studio workspace</h2></div>
     </section>
     <section class="auth-content" aria-labelledby="access-title">
