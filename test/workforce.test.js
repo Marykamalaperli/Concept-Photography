@@ -14,6 +14,8 @@ import { hashPassword } from '../supabase/functions/_shared/accounts.js';
 import { supabaseAdminAuth } from '../supabase/functions/_shared/supabase-admin.js';
 import { mapsLocation } from '../supabase/functions/_shared/maps.js';
 import { refreshReminders } from '../supabase/functions/_shared/reminders.js';
+import { createMobilePush } from '../supabase/functions/_shared/mobile-push.js';
+import { financeCsv, financeReport } from '../public/finance-report.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
 
@@ -53,6 +55,69 @@ test('Maps parsing prefers the pin, handles share redirects, and rejects externa
   }), /does not expose a GPS pin/);
   assert.equal(hops, 1);
   await assert.rejects(mapsLocation({ mapsUrl: 'https://example.net/maps?query=0,0', latitude: '0', longitude: '0' }), /Google Maps/);
+});
+
+test('monthly finance reports separate cash dates from shoot balances and escape CSV text', () => {
+  const state = {
+    tasks: [
+      { id: 1, category: 'Photo shoot', start_at: Date.parse('2026-11-30T19:00:00Z'), title: '=Portrait',
+        income_paise: 100000, payment_due_on: '2026-12-02' },
+      { id: 2, category: 'Photo shoot', start_at: dayStart('2026-11-20'), title: 'Cancelled',
+        income_paise: 100000, payment_due_on: '2026-11-26', shoot_status: 'cancelled' },
+    ],
+    payments: [
+      { task_id: 1, paid_on: '2026-11-28', amount_paise: 10000 },
+      { task_id: 1, paid_on: '2026-12-01', amount_paise: 20000 },
+    ],
+    expenses: [{ name: 'Taxi, "pickup"', spent_on: '2026-12-01', amount_paise: 25050, note: ' +Example' }],
+  };
+  const report = financeReport(state, '2026-12', '2026-12-03', studioDay);
+  assert.deepEqual(report.shoots.map(({ task }) => task.id), [1]);
+  assert.equal(report.received, 20000);
+  assert.equal(report.outstanding, 70000);
+  assert.equal(report.net, -5050);
+  assert.deepEqual(report.overdue.map(({ task }) => task.id), [1]);
+  assert.equal(financeReport(state, '2026-12', '2026-12-02', studioDay).overdue.length, 0);
+  const csv = financeCsv(report, '2026-12', state.tasks);
+  assert.match(csv, /"'=Portrait"/);
+  assert.match(csv, /"Taxi, ""pickup"""/);
+  assert.match(csv, /"' \+Example"/);
+  assert.match(csv, /"Overdue balance"/);
+  assert.doesNotMatch(csv, /2026-11-28|Cancelled/);
+});
+
+test('a test reminder uses only the signed-in device subscription and enforces a cooldown', async () => {
+  const database = new DatabaseSync(':memory:');
+  try {
+    const endpoint = 'https://fcm.googleapis.com/fcm/send/example';
+    database.exec(`
+      CREATE TABLE push_subscriptions(id INTEGER PRIMARY KEY, employee_id INTEGER, endpoint TEXT, p256dh TEXT, auth_secret TEXT, last_test_at INTEGER);
+      CREATE TABLE push_settings(id INTEGER PRIMARY KEY, vapid_public_key TEXT, vapid_private_key TEXT);
+      INSERT INTO push_settings VALUES (1, 'public-test', 'private-test');
+    `);
+    database.prepare('INSERT INTO push_subscriptions VALUES (1, 2, ?, ?, ?, NULL)').run(endpoint, 'device-public', 'device-auth');
+    const db = sqliteAdapter(database);
+    const payloads = [];
+    let status = 201;
+    const sender = createMobilePush({
+      generateRequestDetails(subscription, payload) {
+        assert.equal(subscription.endpoint, endpoint);
+        payloads.push(JSON.parse(payload));
+        return { endpoint, method: 'POST', body: payload };
+      },
+    }, 'https://example.invalid', async () => new Response(null, { status }));
+    await assert.rejects(sender.testDevice(db, 3, endpoint), { status: 409 });
+    assert.deepEqual(await sender.testDevice(db, 2, endpoint), { ok: true });
+    assert.equal(payloads[0].tag, 'concept-device-test');
+    await assert.rejects(sender.testDevice(db, 2, endpoint), { status: 429 });
+    database.exec('UPDATE push_subscriptions SET last_test_at = 0');
+    status = 410;
+    await assert.rejects(sender.testDevice(db, 2, endpoint), { status: 410 });
+    assert.equal(database.prepare('SELECT COUNT(*) AS total FROM push_subscriptions').get().total, 0);
+    assert.equal(payloads.length, 2);
+  } finally {
+    database.close();
+  }
 });
 
 test('workspace roles, personnel requests, crew attendance, payroll, and financial records survive a restart', { timeout: 15000 }, async (t) => {
@@ -175,7 +240,9 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await staff('work-requests', { taskId: open.id }, 409);
   await staff('request-decisions', { id: request.id, status: 'approved' }, 403);
   assert.equal((await staff('state')).tasks.length, 1);
-  await admin('request-decisions', { id: request.id, status: 'approved' });
+  const requestWarning = await admin('request-decisions', { id: request.id, status: 'approved' }, 409);
+  assert.equal(requestWarning.conflicts[0].title, assigned.title);
+  await admin('request-decisions', { id: request.id, status: 'approved', acknowledgedConflicts: requestWarning.conflicts.map(({ key }) => key) });
   await admin('request-decisions', { id: competing.id, status: 'approved' }, 409);
   const after = await staff('state');
   assert.equal(after.tasks.length, 2);
@@ -240,7 +307,13 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await staff('login', { ...credentials, password: 'Rotated example passphrase' });
 
   const crewEnd = new Date(Date.parse(createShoot.startAt) + 75 * 60_000).toISOString();
-  const crew = await admin('tasks', { ...createShoot, title: 'Crew booking', crew: [colleague.id], endAt: crewEnd });
+  const crewBooking = { ...createShoot, title: 'Crew booking', crew: [colleague.id], endAt: crewEnd };
+  const crewWarning = await admin('tasks', crewBooking, 409);
+  assert.equal(crewWarning.conflicts[0].title, open.title);
+  assert.equal(crewWarning.conflicts[0].employee_id, photographer.id);
+  assert.equal((await admin('state')).tasks.some((task) => task.title === crewBooking.title), false);
+  const acknowledgedConflicts = crewWarning.conflicts.map(({ key }) => key);
+  const crew = await admin('tasks', { ...crewBooking, acknowledgedConflicts });
   assert.equal(crew.estimate, 75);
   const crewOverview = await other('state');
   assert.deepEqual(crewOverview.tasks[0].crew.map((entry) => entry.employee_id).sort(), [photographer.id, colleague.id].sort());
@@ -249,13 +322,30 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await admin('tasks', { ...createShoot, title: crew.title, id: crew.id, shootStatus: 'postponed' });
   await clock(other, 'in', shootCoords, { taskId: crew.id }, 403);
   assert.equal((await other('state')).reminders.length, 0);
-  await admin('tasks', { ...createShoot, title: crew.title, id: crew.id, shootStatus: 'booked' });
+  await admin('tasks', { ...createShoot, title: crew.title, id: crew.id, shootStatus: 'booked', acknowledgedConflicts });
   assert.equal((await other('state')).reminders[0].task_id, crew.id);
   const crewShift = await clock(other, 'in', shootCoords, { taskId: crew.id });
   await admin('shoot-done', { taskId: crew.id }, 409);
   await other('task-action', { taskId: crew.id, action: 'complete' }, 409);
   await clock(other, 'out', shootCoords, { shiftId: crewShift.id });
   assert.ok((await admin('shoot-done', { taskId: crew.id })).completed_at);
+
+  const handoff = { title: 'Edit crew photos', category: 'Editing', location: 'Office', parentShootId: crew.id,
+    employeeId: colleague.id, startAt: '2026-12-09T11:00:00+05:30', endAt: '2026-12-09T13:15:00+05:30',
+    deliveryDueAt: '2026-12-10T18:00:00+05:30' };
+  await other('tasks', handoff, 403);
+  await admin('tasks', { ...handoff, parentShootId: open.id }, 409);
+  await admin('tasks', { ...handoff, deliveryDueAt: handoff.startAt }, 400);
+  const editing = await admin('tasks', handoff);
+  assert.equal(editing.parent_shoot_id, crew.id);
+  assert.equal(editing.estimate, 135);
+  assert.equal(editing.priority, 1);
+  await admin('tasks', handoff, 409);
+  const editorTask = (await other('state')).tasks.find((task) => task.id === editing.id);
+  assert.equal(editorTask.source_shoot_title, crew.title);
+  assert.equal(editorTask.delivery_due_at, Date.parse(handoff.deliveryDueAt));
+  assert.equal('payment_due_on' in editorTask, false);
+  await other('task-action', { taskId: editing.id, action: 'block', reason: 'Waiting for files' });
 
   const personal = await staff('tasks', { ...createShoot, title: 'Edit portraits', category: 'Editing', employeeId: colleague.id });
   assert.equal(personal.employee_id, photographer.id);
@@ -278,6 +368,12 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await other('hr/review', { id: leave.id, status: 'cancelled' }, 404);
   await staff('hr/review', { id: leave.id, status: 'approved' }, 403);
   await admin('hr/review', { id: leave.id, status: 'approved' });
+  const leaveWarning = await admin('tasks', { ...createShoot, employeeId: colleague.id,
+    startAt: `${future[1]}T12:00:00+05:30`, title: 'Shoot during approved leave', crew: [photographer.id] }, 409);
+  assert.deepEqual(leaveWarning.conflicts.map(({ employee_id, leave_type }) => [employee_id, leave_type]), [[photographer.id, 'half']]);
+  await staff('payment-due', { taskId: assigned.id, paymentDueOn: past }, 403);
+  await admin('payment-due', { taskId: assigned.id, paymentDueOn: '2026-02-30' }, 400);
+  await admin('payment-due', { taskId: assigned.id, paymentDueOn: past });
   const adjustment = await staff('hr/requests', { kind: 'time', from: past, clockIn: '09:00', clockOut: '11:30', reason: 'Forgot to clock in.' });
   await admin('hr/review', { id: adjustment.id, status: 'approved' });
   const pending = await staff('hr/requests', { kind: 'time', from: past, clockIn: '08:30', reason: 'Check with lead.' });
@@ -303,6 +399,8 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.equal(saved.office.name, 'Office');
   assert.equal(saved.clients.length, 1);
   assert.equal(saved.tasks.find((task) => task.id === assigned.id).income_paise, 1200050);
+  assert.equal(saved.tasks.find((task) => task.id === assigned.id).payment_due_on, past);
+  assert.equal(saved.tasks.find((task) => task.id === editing.id).blocked_reason, 'Waiting for files');
   assert.deepEqual(saved.payments.map((item) => item.amount_paise), [100050]);
   assert.deepEqual(saved.expenses.map((item) => item.amount_paise), [25025]);
   assert.equal(saved.sessions.length, 4);

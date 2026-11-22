@@ -67,6 +67,12 @@ function ledgerDate(value, now) {
   return date;
 }
 
+function paymentDueDate(value) {
+  if (value === '' || value === null) return null;
+  if (!validDay(value)) throw new RequestError('Choose a valid payment due date.');
+  return value;
+}
+
 function adminOnly(actor) {
   if (!actor.is_admin) throw new RequestError('This action is available to the admin only.', 403);
 }
@@ -196,8 +202,9 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       employeesQuery,
       db.all(`
         SELECT tasks.id, title, employee_id, start_at, estimate, location, category, completed_at,
-          site_latitude, site_longitude, maps_url, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone
-          ${manager ? ', client_id, income_paise' : ''}
+          site_latitude, site_longitude, maps_url, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone,
+          parent_shoot_id, delivery_due_at, (SELECT source.title FROM tasks source WHERE source.id = tasks.parent_shoot_id) AS source_shoot_title
+          ${manager ? ', client_id, income_paise, payment_due_on' : ''}
         FROM tasks JOIN employees ON employees.id = tasks.employee_id LEFT JOIN clients ON clients.id = tasks.client_id
         WHERE employees.archived = 0 ${manager ? '' : 'AND EXISTS (SELECT 1 FROM task_assignments WHERE task_id = tasks.id AND employee_id = ?)'}
         ORDER BY completed_at IS NOT NULL, priority DESC, start_at, tasks.id
@@ -352,6 +359,38 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     return (await store.get('INSERT INTO clients (name, phone) VALUES (?, ?) RETURNING id', name, mobile)).id;
   }
 
+  async function checkScheduleConflicts(store, { employeeIds, startAt, endAt, taskId = 0, acknowledged }) {
+    const selected = employeeIds.map(() => '?').join(', ');
+    const [bookings, leave] = await Promise.all([
+      store.all(`
+        SELECT tasks.id, tasks.title, tasks.start_at, tasks.start_at + tasks.estimate * 60000 AS end_at,
+          task_assignments.employee_id, employees.name
+        FROM task_assignments JOIN tasks ON tasks.id = task_assignments.task_id
+        JOIN employees ON employees.id = task_assignments.employee_id
+        WHERE task_assignments.employee_id IN (${selected}) AND tasks.id <> ? AND tasks.shoot_status = 'booked'
+          AND tasks.completed_at IS NULL AND tasks.start_at < ? AND tasks.start_at + tasks.estimate * 60000 > ?
+        ORDER BY tasks.start_at, tasks.id, employees.name
+      `, ...employeeIds, taskId, endAt, startAt),
+      store.all(`
+        SELECT hr_requests.id, hr_requests.employee_id, employees.name, day_from, day_to, leave_type
+        FROM hr_requests JOIN employees ON employees.id = hr_requests.employee_id
+        WHERE hr_requests.employee_id IN (${selected}) AND kind = 'leave' AND status = 'approved'
+          AND day_from <= ? AND day_to >= ?
+        ORDER BY day_from, hr_requests.id
+      `, ...employeeIds, studioDate.format(endAt - 1), studioDate.format(startAt)),
+    ]);
+    const conflicts = [
+      ...bookings.map((entry) => ({ ...entry, key: `work:${entry.employee_id}:${entry.id}:${entry.start_at}:${entry.end_at}` })),
+      ...leave.map((entry) => ({ ...entry, key: `leave:${entry.id}:${entry.day_from}:${entry.day_to}:${entry.leave_type}` })),
+    ];
+    const accepted = new Set(Array.isArray(acknowledged) ? acknowledged : []);
+    if (conflicts.some((item) => !accepted.has(item.key))) {
+      const error = new RequestError('Review the scheduling conflicts before saving.', 409);
+      error.conflicts = conflicts;
+      throw error;
+    }
+  }
+
   async function saveTask(body, actor, now) {
     const title = text(body.title, 'work title');
     const location = text(body.location, 'location name');
@@ -360,14 +399,14 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     const startAt = Date.parse(body.startAt);
     if (!Number.isFinite(startAt)) throw new RequestError('Choose a valid start date and time.');
     const isShoot = category === 'Photo shoot';
-    const hasEnd = isShoot && Object.hasOwn(body, 'endAt');
+    const hasEnd = (isShoot || category === 'Editing') && Object.hasOwn(body, 'endAt');
     const endAt = hasEnd ? Date.parse(body.endAt) : null;
     if (hasEnd && (!Number.isFinite(endAt) || endAt <= startAt)) {
       throw new RequestError('Choose an end date and time after the start.');
     }
     const estimate = hasEnd ? (endAt - startAt) / 60_000 : Number(body.estimate);
     if (!Number.isInteger(estimate) || estimate < 1 || estimate > 1440) {
-      throw new RequestError(hasEnd ? 'Schedule the shoot for at least one minute and up to 24 hours.' : 'Enter a duration from 1 to 1,440 minutes.');
+      throw new RequestError(hasEnd ? 'Schedule the work for at least one minute and up to 24 hours.' : 'Enter a duration from 1 to 1,440 minutes.');
     }
     if (!actor.is_admin && (isShoot || body.id)) throw new RequestError('You can add individual tasks to your own board.', 403);
     const isOpen = actor.is_admin && body.assignment === 'open';
@@ -379,6 +418,23 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       const completed = current?.completed_at != null;
       if (current && current.category !== category) throw new RequestError('Keep the original work category when editing.');
       if (completed && !isShoot) throw new RequestError('Completed tasks cannot be rescheduled.', 409);
+      const parentShootId = current?.parent_shoot_id ?? (body.parentShootId ? idValue(body.parentShootId) : null);
+      let deliveryDueAt = null;
+      if (parentShootId || body.parentShootId) {
+        adminOnly(actor);
+        if (!parentShootId || isOpen || category !== 'Editing' || (current && current.parent_shoot_id !== parentShootId)) {
+          throw new RequestError('Editing must be assigned directly from a completed shoot.');
+        }
+        const shoot = await getTask(parentShootId, store);
+        if (shoot.category !== 'Photo shoot' || !shoot.completed_at) throw new RequestError('Mark the shoot done before scheduling editing.', 409);
+        if (!current && await store.get('SELECT id FROM tasks WHERE parent_shoot_id = ?', parentShootId)) {
+          throw new RequestError('Editing is already scheduled for this shoot. Open its existing schedule.', 409);
+        }
+        deliveryDueAt = Date.parse(body.deliveryDueAt);
+        if (!Number.isFinite(deliveryDueAt) || deliveryDueAt < startAt + estimate * 60_000) {
+          throw new RequestError('Set a delivery deadline at or after the editing end time.');
+        }
+      }
       const employee = await getEmployee(isOpen || !actor.is_admin ? actor.id : body.employeeId, store);
       if (!completed && !isOpen && !employee.has_login && !employee.is_admin) throw new RequestError('Set up this employee’s login before assigning work.');
       const storedCrew = current && isShoot
@@ -413,16 +469,25 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       const status = isShoot && body.shootStatus ? body.shootStatus : current?.shoot_status ?? 'booked';
       if (!['booked', 'postponed', 'cancelled'].includes(status)) throw new RequestError('Choose a valid booking status.');
       if (completed && status !== current.shoot_status) throw new RequestError('Completed shoots must keep their Done status.', 409);
+      const scheduleChanged = !current || current.start_at !== startAt || current.estimate !== estimate ||
+        current.employee_id !== employee.id || crewChanged || current.is_open || current.shoot_status !== status;
+      if (actor.is_admin && (isShoot || parentShootId) && !isOpen && !completed && status === 'booked' && scheduleChanged) {
+        await checkScheduleConflicts(store, { employeeIds: [employee.id, ...crew], startAt, endAt: startAt + estimate * 60_000,
+          taskId: current?.id, acknowledged: body.acknowledgedConflicts });
+      }
       if (current && isShoot && (status !== current.shoot_status || siteChanged || current.start_at !== startAt || current.estimate !== estimate)) {
         await ensureShootInactive(store, current);
       }
+      const dueOn = isShoot && Object.hasOwn(body, 'paymentDueOn') ? paymentDueDate(body.paymentDueOn) : current?.payment_due_on ?? null;
       const values = [title, employee.id, startAt, estimate, location, category, site?.latitude ?? null,
-        site?.longitude ?? null, site?.maps_url ?? null, clientId, income, Number(actor.is_admin && !isOpen), Number(isOpen), status];
+        site?.longitude ?? null, site?.maps_url ?? null, clientId, income, Number(actor.is_admin && !isOpen), Number(isOpen), status,
+        parentShootId, deliveryDueAt, dueOn];
       let task;
       if (current) {
         task = await store.get(`
           UPDATE tasks SET title = ?, employee_id = ?, start_at = ?, estimate = ?, location = ?, category = ?,
-            site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?, shoot_status = ?
+            site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?, shoot_status = ?,
+            parent_shoot_id = ?, delivery_due_at = ?, payment_due_on = ?
           WHERE id = ? RETURNING *
         `, ...values, current.id);
         if (!completed && (current.start_at !== startAt || current.employee_id !== employee.id || isOpen || status !== current.shoot_status)) {
@@ -432,8 +497,8 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       } else {
         task = await store.get(`
           INSERT INTO tasks (title, employee_id, start_at, estimate, location, category, site_latitude,
-            site_longitude, maps_url, client_id, income_paise, priority, is_open, shoot_status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+            site_longitude, maps_url, client_id, income_paise, priority, is_open, shoot_status, parent_shoot_id, delivery_due_at, payment_due_on)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
         `, ...values);
       }
       if (crewChanged) {
@@ -471,6 +536,10 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       if (body.status === 'approved') {
         if (!task.is_open || task.shoot_status !== 'booked' || task.completed_at || task.start_at + task.estimate * 60_000 <= now) throw new RequestError('This opportunity is closed.', 409);
         await getEmployee(request.employee_id, store);
+        if (task.category === 'Photo shoot') {
+          await checkScheduleConflicts(store, { employeeIds: [request.employee_id], startAt: task.start_at,
+            endAt: task.start_at + task.estimate * 60_000, taskId: task.id, acknowledged: body.acknowledgedConflicts });
+        }
         await store.run('UPDATE tasks SET employee_id = ?, is_open = 0, priority = 1 WHERE id = ?', request.employee_id, task.id);
         await store.run("UPDATE work_requests SET status = 'declined', decided_at = ? WHERE task_id = ? AND id != ? AND status = 'pending'", now, task.id, request.id);
         await refreshReminders(store, now);
@@ -629,6 +698,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       if (path === '/api/push/status') return mobilePush.status(db, actor.id, body.endpoint);
       if (path === '/api/push/register') return mobilePush.register(db, actor.id, body);
       if (path === '/api/push/remove') return mobilePush.remove(db, actor.id, body.endpoint);
+      if (path === '/api/push/test') return mobilePush.testDevice(db, actor.id, body.endpoint);
     }
     if (path === '/api/attendance') {
       return recordAttendance(actor.id, body, now);
@@ -650,6 +720,14 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     if (path === '/api/clients') return saveClient(body);
     if (path === '/api/request-decisions') return decideRequest(body, now);
     if (path === '/api/payments') return recordPayment(body, now);
+    if (path === '/api/payment-due') {
+      const date = paymentDueDate(body.paymentDueOn);
+      return db.transaction(async (store) => {
+        const shoot = await getTask(body.taskId, store);
+        if (shoot.category !== 'Photo shoot') throw new RequestError('Shoot not found.', 404);
+        return store.get('UPDATE tasks SET payment_due_on = ? WHERE id = ? RETURNING id, payment_due_on', date, shoot.id);
+      });
+    }
     if (path === '/api/expenses') {
       const values = [text(body.name, 'expense name'), text(body.category, 'expense category'), paise(body.amount),
         ledgerDate(body.date, now), optional(body.note, 'expense notes', 300)];

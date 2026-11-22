@@ -17,9 +17,9 @@ Create or update the local development admin with `npm run create-local-admin --
 
 1. Under **Dashboard → Company location**, paste the office’s Google Maps link and save the location. Share links that resolve to a GPS pin fill the coordinates automatically. If a link only contains a place name or its redirect is unavailable, drop a pin in Maps and share it or enter its latitude and longitude. The office geofence is 100 metres. Use **Open in Google Maps** to open a saved office or shoot pin.
 2. Under **Employees**, add each person, set their company sign-in email and password, and share the credentials privately. Use **Edit employee** to update a profile or reset its password. A password reset or email change ends current sessions.
-3. Under **Shoot calendar → Book shoot**, enter the shoot name, client, Maps link, **From** and **To** times in IST, and expected income. The end can fall on the next date for a booking of up to 24 hours. Open a completed shoot and select **Edit schedule** to correct its details or planned times.
+3. Under **Shoot calendar → Book shoot**, enter the shoot name, client, Maps link, **From** and **To** times in IST, and expected income. Review any crew bookings or approved leave that overlap before saving. The end can fall on the next date for a booking of up to 24 hours. After marking a shoot done, use **Schedule editing** to assign an editor, set the editing times and delivery deadline, and view progress on the shoot. Use **Edit schedule** to correct the original booking.
 4. Assign work directly to an employee to put it in the priority section of their schedule. Choose **Open for employee requests** to let employees apply. Employees see basic opportunity information until an admin approves a request, which assigns the work and shares its details.
-5. Under **Finances**, record full or partial payments against shoots and add company expenses. Edit a payment or expense in its history to correct an entry. Shoot balances show expected income, receipts, and outstanding payments. Cash profit to date is receipts minus recorded expenses. Amounts are in INR.
+5. Under **Finances**, record full or partial payments against shoots, set due dates, and add company expenses. Choose a month to review shoots by schedule date and cash by transaction date. Use **Overdue payments** for unpaid balances due before today and **Export CSV** to download the report. Cash profit is receipts minus recorded expenses. Amounts are in INR.
 6. Use **Clients** to review owner contacts and client notes. Use **Schedule** and **Attendance** to review employees’ assignments, tracked work, and clock records.
 
 ## Employee workflow
@@ -31,6 +31,8 @@ Clock in and out at the office or an assigned shoot with a fresh GPS reading. Sh
 Keep the workspace open and allow location access for automatic departures and returns. A reliable reading outside the geofence clocks you out. Returning to the same eligible site clocks you back in. **Cancel auto return** ends that waiting state. A locked screen, suspended tab, or closed browser can interrupt the updates. Location access requires HTTPS or localhost.
 
 Open **Notifications → Enable mobile alerts** on each phone and grant permission. On an iPhone or iPad, use Safari’s **Share → Add to Home Screen**, then sign in from the installed app and enable alerts there. On Android, enable alerts in a supported browser such as Chrome.
+
+Under **Notifications → Device checks**, test GPS at the office or an assigned shoot without making an attendance entry. Once mobile alerts are enabled on the phone, use **Send test reminder** and check the phone for the notification.
 
 The hosted workspace checks schedules every minute and sends a push around 30 minutes before assigned work starts. Assignments added inside that window are picked up on the next check. Push can arrive while the workspace is closed. Use **Disable mobile alerts** or sign out to stop alerts on that device. Delivery time depends on the phone’s connection and notification settings. The Notifications page also keeps the in-app reminders.
 

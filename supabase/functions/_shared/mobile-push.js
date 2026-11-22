@@ -96,29 +96,33 @@ async function claimDue(db, now) {
 }
 
 export function createMobilePush(webPush, subject, fetchPush = fetch) {
+  async function deliver(keys, subscription, payload, ttl) {
+    const request = webPush.generateRequestDetails(
+      { endpoint: pushEndpoint(subscription.endpoint), keys: { p256dh: subscription.p256dh, auth: subscription.auth_secret } },
+      JSON.stringify(payload),
+      {
+        TTL: ttl, urgency: 'high',
+        vapidDetails: { subject, publicKey: keys.vapid_public_key, privateKey: keys.vapid_private_key },
+      },
+    );
+    const response = await fetchPush(request.endpoint, {
+      method: request.method, headers: request.headers,
+      body: request.body, redirect: 'error', signal: AbortSignal.timeout(5000),
+    });
+    await response.body?.cancel();
+    return response;
+  }
+
   async function send(db, keys, delivery) {
     const now = Date.now();
     if (delivery.start_at <= now) return;
-    const payload = JSON.stringify({
+    const payload = {
       title: 'Concept Photography',
       body: `${delivery.title} starts at ${studioTime.format(delivery.start_at)} IST.`,
       tag: `concept-shoot-${delivery.task_id}-${delivery.start_at}`,
-    });
+    };
     try {
-      const request = webPush.generateRequestDetails(
-        { endpoint: pushEndpoint(delivery.endpoint), keys: { p256dh: delivery.p256dh, auth: delivery.auth_secret } },
-        payload,
-        {
-          TTL: Math.max(1, Math.ceil((delivery.start_at - now) / 1000)),
-          urgency: 'high',
-          vapidDetails: { subject, publicKey: keys.vapid_public_key, privateKey: keys.vapid_private_key },
-        },
-      );
-      const response = await fetchPush(request.endpoint, {
-        method: request.method, headers: request.headers,
-        body: request.body, redirect: 'error', signal: AbortSignal.timeout(5000),
-      });
-      await response.body?.cancel();
+      const response = await deliver(keys, delivery, payload, Math.max(1, Math.ceil((delivery.start_at - now) / 1000)));
       if (response.ok) {
         await db.run(`
           UPDATE push_deliveries SET sent_at = ?
@@ -163,6 +167,38 @@ export function createMobilePush(webPush, subject, fetchPush = fetch) {
     async remove(db, employeeId, endpoint) {
       await db.run('DELETE FROM push_subscriptions WHERE employee_id = ? AND endpoint = ?', employeeId, pushEndpoint(endpoint));
       return { enabled: false };
+    },
+
+    async testDevice(db, employeeId, value) {
+      const endpoint = pushEndpoint(value);
+      const now = Date.now();
+      const subscription = await db.get(`
+        UPDATE push_subscriptions SET last_test_at = ?
+        WHERE employee_id = ? AND endpoint = ? AND (last_test_at IS NULL OR last_test_at <= ?)
+        RETURNING id, endpoint, p256dh, auth_secret
+      `, now, employeeId, endpoint, now - minute);
+      if (!subscription) {
+        const existing = await db.get('SELECT id FROM push_subscriptions WHERE employee_id = ? AND endpoint = ?', employeeId, endpoint);
+        if (existing) throw new PushError('Wait one minute between test reminders.', 429);
+        throw new PushError('Enable mobile alerts on this device first.', 409);
+      }
+      const keys = await ensureKeys(db, webPush);
+      let response;
+      try {
+        response = await deliver(keys, subscription, {
+          title: 'Concept Photography',
+          body: 'This is a test reminder from your workspace.',
+          tag: 'concept-device-test',
+        }, 60);
+      } catch {
+        throw new PushError('The notification service could not be reached. Try again in a minute.', 503);
+      }
+      if (response.ok) return { ok: true };
+      if (response.status === 404 || response.status === 410) {
+        await db.run('DELETE FROM push_subscriptions WHERE id = ? AND employee_id = ?', subscription.id, employeeId);
+        throw new PushError('This device’s alert subscription expired. Enable mobile alerts again.', 410);
+      }
+      throw new PushError('The notification service could not accept the test. Try again in a minute.', 503);
     },
 
     async dispatch(db, authorization) {

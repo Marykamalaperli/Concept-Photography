@@ -182,5 +182,21 @@ export function openStore(db) {
       throw error;
     }
   }
+  if (db.prepare('PRAGMA user_version').get().user_version < 5) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        ALTER TABLE tasks ADD COLUMN parent_shoot_id INTEGER REFERENCES tasks(id);
+        ALTER TABLE tasks ADD COLUMN delivery_due_at INTEGER;
+        ALTER TABLE tasks ADD COLUMN payment_due_on TEXT;
+        CREATE UNIQUE INDEX one_editing_schedule_per_shoot ON tasks (parent_shoot_id) WHERE parent_shoot_id IS NOT NULL;
+        PRAGMA user_version = 5;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   return db;
 }

@@ -139,6 +139,13 @@ dialog::backdrop{background:#1c171480}
 .net-panel p{color:var(--muted);font-size:12px;margin-top:4px}
 .net-panel strong{font:800 25px Manrope,sans-serif;color:var(--green)}
 .finance-table{margin-bottom:17px}
+.finance-toolbar{display:flex;align-items:end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:17px}
+.finance-toolbar h2{font-size:17px}
+.finance-toolbar p,.editing-handoff p,.device-check p{color:var(--muted);font-size:12px;line-height:1.5;margin-top:4px}
+.finance-toolbar label,.device-check label{display:grid;gap:5px;font-size:12px;font-weight:650}
+.finance-toolbar input,.device-check select{min-height:38px;max-width:100%;padding:7px 9px;border:1px solid var(--stroke);border-radius:8px;background:white;color:var(--ink);font:inherit}
+.finance-actions{display:flex;align-items:end;gap:6px;flex-wrap:wrap}
+.finance-table td:nth-child(2),.finance-table td:nth-child(3),.finance-table td:nth-child(4),.finance-table td:nth-child(5){white-space:nowrap;font-variant-numeric:tabular-nums}
 .ledger-panels{grid-template-columns:minmax(0,1fr)}
 .ledger-panels table{min-width:430px}
 .expense-ledger table{min-width:640px}
@@ -148,6 +155,20 @@ dialog::backdrop{background:#1c171480}
 .shoot-fields,.shoot-time-fields{margin:0;min-width:0;padding:12px;border:1px solid var(--stroke);border-radius:9px}
 .shoot-fields legend,.shoot-time-fields legend{padding:0 5px;color:var(--muted);font-size:12px;font-weight:650}
 .shoot-time-fields .field-note{margin-top:9px}
+.editing-handoff,.schedule-conflicts{margin-top:12px;padding:12px;border:1px solid var(--stroke);border-radius:9px;background:var(--paper);font-size:13px}
+.editing-handoff{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.editing-handoff>div{flex:1 1 185px}
+.schedule-conflicts{margin:0;background:#fff5e3;border-color:#dfba7a}
+.schedule-conflicts h3,.device-check h3{font-size:14px}
+.schedule-conflicts ul{padding-inline-start:18px;margin:8px 0 10px;display:grid;gap:5px}
+.form-grid .conflict-confirm{display:flex;align-items:center;gap:8px}
+.conflict-confirm input[type=checkbox]{min-width:16px;min-height:16px;accent-color:var(--accent)}
+.device-checks{margin-bottom:16px}
+.device-check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px}
+.device-check{display:grid;gap:8px;align-content:start;padding:12px;border:1px solid var(--stroke);border-radius:9px;min-width:0}
+.device-check>button,.device-check .card-actions{justify-self:start}
+.device-check .card-actions{margin:0}
+.device-check p:empty{display:none}
 .task-time-fields{display:contents}
 @media(max-width:480px){.shoot-time-fields .form-grid{grid-template-columns:1fr}}
 .owner-fields{padding:0;margin:0;border:0;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:12px}

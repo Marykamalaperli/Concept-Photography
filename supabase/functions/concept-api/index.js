@@ -106,6 +106,7 @@ Deno.serve(async (request, info) => {
   } catch (error) {
     const status = error.status || 500;
     if (status === 500) console.error('Concept API request failed.', error.name, error.code);
-    return json(status, { error: status === 500 ? 'Something went wrong. Try again.' : error.message });
+    return json(status, { error: status === 500 ? 'Something went wrong. Try again.' : error.message,
+      ...(status === 409 && error.conflicts ? { conflicts: error.conflicts } : {}) });
   }
 });

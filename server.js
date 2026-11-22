@@ -78,7 +78,8 @@ const server = createServer(async (req, res) => {
   } catch (error) {
     const status = error.status || (error.code === 'ENOENT' ? 404 : 500);
     if (status === 500) console.error(error);
-    sendJson(res, status, { error: status === 500 ? 'Something went wrong. Try again.' : error.message });
+    sendJson(res, status, { error: status === 500 ? 'Something went wrong. Try again.' : error.message,
+      ...(status === 409 && error.conflicts ? { conflicts: error.conflicts } : {}) });
   }
 });
 

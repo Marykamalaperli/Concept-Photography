@@ -32,6 +32,7 @@ export async function workspaceRequest(api, path, body, token) {
   if (!response.ok) {
     const error = new Error(payload?.error || 'The workspace could not complete the request. Try again.');
     error.status = response.status;
+    if (Array.isArray(payload?.conflicts)) error.conflicts = payload.conflicts;
     throw error;
   }
   return payload;
