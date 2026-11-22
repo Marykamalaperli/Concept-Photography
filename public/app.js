@@ -177,7 +177,6 @@ function renderChrome() {
     <a class="brand" href="#dashboard" aria-label="Concept Photography dashboard">
       <img class="brand-mark" src="./brand-mark.png" width="39" height="39" alt=""><span><strong>Concept</strong><small>Photography</small></span>
     </a>
-    <p class="nav-label">${manager() ? 'Studio admin' : 'Workspace'}</p>
     <nav class="nav" aria-label="Workspace">
       ${nav().map(([key, label, symbol]) => {
         const count = key === 'approvals' ? pendingRequests().length : key === 'notifications' ? unread : 0;
@@ -186,11 +185,11 @@ function renderChrome() {
         </a>`;
       }).join('')}
     </nav>
-    <div class="sidebar-foot"><img src="./brand-mark.png" width="18" height="18" alt=""><div><strong>Concept Photography</strong><small>Studio workspace · IST</small></div></div>`;
+    <div class="sidebar-foot"><img src="./brand-mark.png" width="18" height="18" alt=""><strong>Concept Photography</strong></div>`;
   topbar.innerHTML = `
     <div class="breadcrumb">
       <button type="button" class="icon-button menu-button" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="${mobileMenu}" data-action="menu">${icon('menu')}</button>
-      <span class="workspace">${manager() ? 'Studio admin' : 'Workspace'}</span><span class="trail">${icon('chevron-right')}</span><strong>${section}</strong>
+      <strong>${section}</strong>
     </div>
     <div class="top-actions">
       <a href="#notifications" class="icon-button" aria-label="Notifications${unread ? `, ${unread} unread` : ''}">${icon('bell')}${unread ? '<span class="bell-dot"></span>' : ''}</a>
@@ -253,23 +252,18 @@ function officeCard() {
       <p>${office ? e(office.name) + ' · 100 m attendance boundary' : 'Paste a Google Maps link to enable office attendance.'}</p></div></div>
   </div>
   <div class="card-actions">${actionButton(office ? 'Edit location' : 'Set company location', 'office-location', 'map-pin', 'secondary')}
-    ${mapLinks(office)}
+    ${mapLink(office)}
   </div></section>`;
 }
 
-function externalLink(url, label) {
-  return `<a class="text-link" href="${e(url)}" target="_blank" rel="noopener noreferrer">${label}${icon('external-link')}</a>`;
+function googleMapsUrl({ latitude, longitude }) {
+  const pin = encodeURIComponent(`${latitude},${longitude}`);
+  return `https://www.google.com/maps/search/?api=1&query=${pin}`;
 }
 
-function openStreetMapUrl({ latitude, longitude }) {
-  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=17/${latitude}/${longitude}`;
-}
-
-function mapLinks(site) {
+function mapLink(site) {
   if (!site) return '';
-  const pin = encodeURIComponent(`${site.latitude},${site.longitude}`);
-  return `${externalLink(`https://www.google.com/maps/search/?api=1&query=${pin}`, 'Open in Google Maps')}
-    ${externalLink(openStreetMapUrl(site), 'OpenStreetMap')}`;
+  return `<a class="text-link" href="${e(googleMapsUrl(site))}" target="_blank" rel="noopener noreferrer">Open in Google Maps${icon('external-link')}</a>`;
 }
 
 function dashboard() {
@@ -345,7 +339,7 @@ function locationCell(serialized) {
   const place = JSON.parse(serialized);
   if (place.label) return e(place.label);
   const coords = `${place.latitude.toFixed(5)}, ${place.longitude.toFixed(5)}`;
-  return `<a class="map-link" target="_blank" rel="noopener noreferrer" href="${e(openStreetMapUrl(place))}">${coords}</a>
+  return `<a class="map-link" target="_blank" rel="noopener noreferrer" href="${e(googleMapsUrl(place))}">${coords}</a>
     <small>Accuracy ±${Math.round(place.accuracy)} m</small>`;
 }
 
@@ -494,7 +488,7 @@ function taskCard(task, inDialog = false) {
         manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
       <div class="inline">${icon('calendar-days')}${task.shoot_status === 'postponed' ? 'Awaiting a new date' :
         `${shortDate.format(task.start_at)} · ${time(task.start_at)}${isShoot ? ` – ${shootEndLabel(task)}` : ''} IST`}</div>
-      <div class="inline">${icon('map-pin')}${e(task.location)} ${mapLinks(shootSite(task))}</div>
+      <div class="inline">${icon('map-pin')}${e(task.location)} ${mapLink(shootSite(task))}</div>
       ${task.client_name ? `<div class="inline">${icon('contact-round')}${e(task.client_name)} · <a class="map-link" href="tel:${e(task.client_phone)}">${e(task.client_phone)}</a></div>` : ''}
       ${manager() && isShoot ? `<div class="inline">${icon('indian-rupee')}${money(task.income_paise)} expected income</div>` : ''}
     </div>
@@ -582,7 +576,7 @@ function financesPage() {
     <div class="dashboard-grid ledger-panels">
       <section class="panel"><div class="panel-head"><div><h2>Payment history</h2></div></div>
         ${paymentRows.length ? table('Payments', ['Date', 'Shoot', 'Amount', 'Reference', 'Actions'], paymentRows) : empty('No payments recorded.')}</section>
-      <section class="panel"><div class="panel-head"><div><h2>Expense history</h2></div></div>
+      <section class="panel expense-ledger"><div class="panel-head"><div><h2>Expense history</h2></div></div>
         ${expenseRows.length ? table('Expenses', ['Date', 'Expense', 'Category', 'Amount', 'Notes', 'Actions'], expenseRows) : empty('No expenses recorded.')}</section>
     </div>`;
 }

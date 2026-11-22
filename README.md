@@ -15,7 +15,7 @@ Create or update the local development admin with `npm run create-local-admin --
 
 ## Admin workflow
 
-1. Under **Dashboard → Company location**, paste the office’s Google Maps link and save the location. Share links that resolve to a GPS pin fill the coordinates automatically. If a link only contains a place name or its redirect is unavailable, drop a pin in Maps and share it or enter its latitude and longitude. The office geofence is 100 metres. Use **Open in Google Maps** or **OpenStreetMap** to open a saved office or shoot pin.
+1. Under **Dashboard → Company location**, paste the office’s Google Maps link and save the location. Share links that resolve to a GPS pin fill the coordinates automatically. If a link only contains a place name or its redirect is unavailable, drop a pin in Maps and share it or enter its latitude and longitude. The office geofence is 100 metres. Use **Open in Google Maps** to open a saved office or shoot pin.
 2. Under **Employees**, add each person, set their company sign-in email and password, and share the credentials privately. Use **Edit employee** to update a profile or reset its password. A password reset or email change ends current sessions.
 3. Under **Shoot calendar → Book shoot**, enter the shoot name, client, Maps link, **From** and **To** times in IST, and expected income. The end can fall on the next date for a booking of up to 24 hours. Open a completed shoot and select **Edit schedule** to correct its details or planned times.
 4. Assign work directly to an employee to put it in the priority section of their schedule. Choose **Open for employee requests** to let employees apply. Employees see basic opportunity information until an admin approves a request, which assigns the work and shares its details.
