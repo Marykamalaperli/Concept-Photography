@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +46,7 @@ await readFile(join(root, 'index.html'));
 await mkdir(destination, { recursive: true });
 await once(server.listen(0, '127.0.0.1'), 'listening');
 const url = `http://127.0.0.1:${server.address().port}${prefix}`;
+const summary = process.env.GITHUB_STEP_SUMMARY;
 
 try {
   for (const profile of ['mobile', 'desktop']) {
@@ -61,8 +62,13 @@ try {
     const report = JSON.parse(await readFile(output + '.report.json', 'utf8'));
     const scores = categories.map((category) => [category, report.categories[category].score * 100]);
     const lcp = report.audits['largest-contentful-paint'].displayValue;
-    console.log(`${profile}: ${scores.map(([category, score]) => `${category} ${score}`).join(', ')}. Largest paint ${lcp}.`);
-    if (scores.some(([, score]) => score !== 100)) process.exitCode = 1;
+    const result = `${profile}: ${scores.map(([category, score]) => `${category} ${score}`).join(', ')}. Largest paint ${lcp}.`;
+    console.log(result);
+    if (summary) await appendFile(summary, `- ${result}\n`);
+    if (scores.some(([, score]) => score !== 100)) {
+      if (summary) console.error(`::error title=Lighthouse score below 100::${result}`);
+      process.exitCode = 1;
+    }
   }
 } finally {
   server.close();

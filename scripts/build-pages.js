@@ -48,7 +48,7 @@ async function pagesApp() {
   const assets = [
     ...brandAssets,
     ...signInAssets,
-    'styles.css', 'studio.webp', 'app.js', 'access-view.js', 'hr-views.js',
+    'styles.css', 'studio.webp', 'start-workspace.js', 'app.js', 'access-view.js', 'hr-views.js',
     'mobile-alerts.js', 'push-worker.js', 'manifest.webmanifest', 'app-icon-192.png', 'app-icon-512.png',
   ];
   await Promise.all([

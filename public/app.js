@@ -1,11 +1,11 @@
 import { assignedTo, availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
-import { loginView, passwordField } from './access-view.js';
+import { loginView, passwordField, togglePassword, workspaceSessionKey } from './access-view.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
 
 const apiOrigin = document.querySelector('meta[name="concept-api"]')?.content;
-const sessionKey = apiOrigin && `concept-photography-session:${apiOrigin}`;
+const sessionKey = workspaceSessionKey(apiOrigin);
 let accessToken = sessionKey ? sessionStorage.getItem(sessionKey) : null;
 
 const main = document.querySelector('main');
@@ -1139,14 +1139,7 @@ function applyAction(button, path, body, message, close = false) {
 document.addEventListener('click', (event) => {
   const toggle = event.target.closest('[data-password-toggle]');
   if (toggle) {
-    const field = document.getElementById(toggle.getAttribute('aria-controls'));
-    if (!(field instanceof HTMLInputElement)) return;
-    const visible = field.type === 'password';
-    field.type = visible ? 'text' : 'password';
-    const label = visible ? 'Hide password' : 'Show password';
-    toggle.setAttribute('aria-label', label);
-    toggle.title = label;
-    toggle.innerHTML = icon(visible ? 'eye-off' : 'eye');
+    togglePassword(toggle);
     return;
   }
   const button = event.target.closest('button[data-action]');

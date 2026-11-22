@@ -10,6 +10,8 @@ export function workspaceAddress(value) {
   return url;
 }
 
+export const workspaceSessionKey = (api) => api && `concept-photography-session:${api}`;
+
 export function accessView({ title, description, content }) {
   return `<div class="auth-layout">
     <section class="auth-aside" aria-label="Concept Photography">
@@ -42,6 +44,17 @@ export function passwordField({ id, label = 'Password', newPassword = false, req
         aria-label="Show password" title="Show password">${accessIcon('eye')}</button>
     </span>
   </div>`;
+}
+
+export function togglePassword(button) {
+  const field = document.getElementById(button.getAttribute('aria-controls'));
+  if (!(field instanceof HTMLInputElement)) return;
+  const visible = field.type === 'password';
+  field.type = visible ? 'text' : 'password';
+  const label = visible ? 'Hide password' : 'Show password';
+  button.setAttribute('aria-label', label);
+  button.title = label;
+  button.innerHTML = accessIcon(visible ? 'eye-off' : 'eye');
 }
 
 export function loginView() {
