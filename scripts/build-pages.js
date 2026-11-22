@@ -76,7 +76,8 @@ async function pagesApp() {
   if (typeof url !== 'string' || !/^https:\/\/[a-z0-9]{20}\.supabase\.co$/.test(url)) {
     throw new Error('Set a valid hosted project URL in supabase/project.json.');
   }
-  const entry = await readFile(new URL('index.html', publicFiles), 'utf8');
+  const entry = (await readFile(new URL('index.html', publicFiles), 'utf8'))
+    .replace('rel="manifest"', 'data-workspace-manifest');
   const assets = [
     ...brandAssets,
     ...signInAssets,

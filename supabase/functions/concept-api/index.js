@@ -78,6 +78,14 @@ Deno.serve(async (request, info) => {
   }
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
   if (!path.startsWith('/api/')) return json(404, { error: 'Route not found.' });
+  if (request.method === 'GET' && path === '/api/login' && origin === siteOrigin) {
+    try {
+      await sql`SELECT 1`;
+      return new Response(null, { status: 204, headers });
+    } catch {
+      return json(503, { error: 'The workspace is temporarily unavailable.' });
+    }
+  }
 
   const req = {
     method: request.method,

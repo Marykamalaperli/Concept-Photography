@@ -99,6 +99,17 @@ try {
     if (summary) await appendFile(summary, `- ${insightResult}\n`);
     if (flagged.length) {
       if (summary) console.error(`::error title=Lighthouse sign-in insights flagged::${insightResult}`);
+      for (const { path, report } of samples) {
+        const dependency = report.audits['network-dependency-tree-insight'];
+        if (dependency?.score !== 1) {
+          const chains = dependency?.details?.items.find(({ value }) => value?.type === 'network-tree')?.value.chains;
+          const urls = (nodes) => Object.values(nodes).flatMap(({ url, children }) => [url, ...urls(children)]);
+          if (chains) {
+            const requests = urls(chains).map((url) => url.startsWith('data:') ? url.split(',')[0] : url);
+            console.error(`${summary ? '::notice title=Critical requests::' : ''}${path} ${requests.join(', ')}`);
+          }
+        }
+      }
       process.exitCode = 1;
     }
   }

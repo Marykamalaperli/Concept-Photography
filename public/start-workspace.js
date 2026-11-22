@@ -9,6 +9,11 @@ let ready = false;
 let loading;
 let dashboardStyles;
 
+function loadManifest() {
+  const manifest = document.querySelector('[data-workspace-manifest]');
+  if (manifest) manifest.rel = 'manifest';
+}
+
 function loadDashboardStyles() {
   dashboardStyles ??= new Promise((resolve, reject) => {
     const link = document.createElement('link');
@@ -27,6 +32,7 @@ function loadDashboardStyles() {
 
 function loadWorkspace() {
   loading ??= Promise.all([loadDashboardStyles(), import(appUrl.href)]).then(([, workspace]) => {
+    loadManifest();
     workspace.startWorkspace();
     ready = true;
     return workspace;
@@ -47,11 +53,7 @@ if (!api || sessionStorage.getItem(workspaceSessionKey(api))) {
   loadWorkspace().catch(showLoadError);
 } else {
   form.addEventListener('focusin', () => {
-    const connection = document.createElement('link');
-    connection.rel = 'preconnect';
-    connection.href = new URL(api).origin;
-    connection.crossOrigin = 'anonymous';
-    document.head.append(connection);
+    fetch(`${api}/api/login`, { credentials: 'omit', signal: AbortSignal.timeout(4000) }).catch(() => {});
     loadWorkspace().catch(() => {});
   }, { once: true });
   form.addEventListener('click', (event) => {

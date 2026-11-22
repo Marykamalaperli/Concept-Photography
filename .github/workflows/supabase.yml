@@ -129,6 +129,13 @@ jobs:
           trap 'rm -f "$probe"' EXIT
           body=$(jq -nc --arg email "deployment-probe-$GITHUB_RUN_ID@example.invalid" \
             '{email: $email, password: "invalid-probe-password"}')
+          preparation=$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code} %{time_total}' \
+            -H "Origin: $SITE_ORIGIN" "$PROJECT_URL/functions/v1/concept-api/api/login")
+          read -r prepared prepare_elapsed <<<"$preparation"
+          if [[ $prepared != 204 ]]; then
+            echo "::error::Hosted sign-in preparation returned HTTP $prepared."
+            exit 1
+          fi
           measured=$(curl --silent --show-error --max-time 15 --output "$probe" --write-out '%{http_code} %{time_total}' \
             -H "Origin: $SITE_ORIGIN" -H 'Content-Type: application/json' --data "$body" \
             "$PROJECT_URL/functions/v1/concept-api/api/login")
@@ -138,7 +145,7 @@ jobs:
             exit 1
           fi
           printf 'Hosted invalid-credential response took %s seconds.\n' "$elapsed" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Hosted sign-in endpoint::Invalid-credential response took $elapsed seconds."
+          echo "::notice title=Hosted sign-in endpoint::Connection preparation took $prepare_elapsed seconds. Invalid-credential response took $elapsed seconds."
       - name: Check private calendar feed routing
         shell: bash
         env:
