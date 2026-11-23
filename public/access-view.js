@@ -21,7 +21,7 @@ export async function workspaceRequest(api, path, body, token) {
   try {
     response = await fetch(`${api || ''}/api/${path}`, {
       headers,
-      ...(['login', 'session', 'state'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
+      ...(['login', 'session', 'state', 'attendance'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
       ...(api ? { credentials: 'omit' } : {}),
       ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
     });

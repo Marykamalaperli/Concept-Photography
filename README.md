@@ -28,7 +28,7 @@ Sign in with the credentials from the admin. **My Schedule** shows assigned work
 
 Clock in and out at the office or an assigned shoot with a fresh GPS reading. Shoot check-in opens 30 minutes before the start and ends after the scheduled duration. For a shoot with several locations, select the shoot and GPS checks the nearest saved pin. Clock-out remains available at the pin where you checked in. Attendance requires a reading within 100 metres that meets the browser accuracy check. At a shoot, clocking in also starts the work timer and clocking out stops it.
 
-Keep the workspace open and allow location access for automatic departures and returns. A reliable reading outside the geofence clocks you out. Returning to the same eligible site clocks you back in. **Cancel auto return** ends that waiting state. A locked screen, suspended tab, or closed browser can interrupt the updates. Location access requires HTTPS or localhost.
+Keep the workspace open and allow location access for automatic departures and returns. A reliable GPS reading outside the geofence clocks you out. Returning to the same eligible pin clocks you back in. **Cancel auto return** ends that waiting state. The workspace retries brief connection failures and takes a fresh reading when you return to the tab. A locked screen, suspended tab, or closed browser can interrupt the updates. Location access requires HTTPS or localhost.
 
 Open **Notifications → Enable mobile alerts** on each phone and grant permission. On an iPhone or iPad, use Safari’s **Share → Add to Home Screen**, then sign in from the installed app and enable alerts there. On Android, enable alerts in a supported browser such as Chrome.
 

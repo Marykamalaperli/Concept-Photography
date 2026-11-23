@@ -1,4 +1,6 @@
-import { additionalShootLocations, assignedTo, availableShoots, fenceRadius, maxAdditionalShootSites, presenceAt, returnSite, shootSites } from './attendance-policy.js';
+import {
+  additionalShootLocations, assignedTo, availableShoots, fenceRadius, maxAdditionalShootSites, maxFixAge, presenceAt, returnSite, shootSites,
+} from './attendance-policy.js';
 import { loginView, passwordField, togglePassword, workspaceRequest, workspaceSessionKey } from './access-view.js';
 import { financeCsv, financeReport } from './finance-report.js';
 import {
@@ -1152,6 +1154,7 @@ function expenseForm(expense) {
 }
 
 const locationOptions = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 };
+const observationRetryDelay = 3_000;
 
 function toFix({ coords, timestamp }) {
   return { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, capturedAt: timestamp };
@@ -1217,7 +1220,7 @@ function updateTracking() {
     return;
   }
   if (!watcher) {
-    const watching = { employeeId: actorId };
+    const watching = { employeeId: actorId, retryAt: 0 };
     watcher = watching;
     watching.id = navigator.geolocation.watchPosition((position) => {
       if (watcher !== watching) return;
@@ -1236,11 +1239,19 @@ function updateTracking() {
       updateTracking();
     }, locationOptions);
   }
-  const action = target.current ? 'automatic clock-out' : 'automatic clock-in when you return';
-  if (watcher.error) setWatchStatus(watcher.error);
+  const action = target.current ? `automatic clock-out from ${target.site.name}` : `automatic clock-in when you return to ${target.site.name}`;
+  if (navigator.onLine === false) setWatchStatus('Waiting for an internet connection to update attendance.');
+  else if (watcher.retryAt > Date.now()) setWatchStatus('Could not update attendance. Retrying automatically.');
+  else if (watcher.error) setWatchStatus(watcher.error);
   else if (!watcher.fix) setWatchStatus(`Waiting for GPS for ${action}.`);
   else if (presenceAt(watcher.fix, target.site) === 'uncertain') setWatchStatus('Automatic tracking is waiting for a clearer GPS signal.');
   else setWatchStatus(`Tracking active for ${action}. Last GPS reading at ${time(watcher.fix.capturedAt)} IST. Keep the workspace open and your phone awake.`);
+}
+
+function restartLocationTracking() {
+  if (snapshot === undefined || readingLocation || !trackingTarget()) return;
+  stopTracking();
+  updateTracking();
 }
 
 function testLocation(button) {
@@ -1266,22 +1277,45 @@ function testLocation(button) {
 }
 
 async function processLocation() {
-  if (!lastFix || lastFix.employeeId !== actorId || pending || observing) return;
+  const watch = watcher;
+  if (!watch || !lastFix || lastFix.employeeId !== actorId || pending || observing ||
+      navigator.onLine === false || Date.now() < watch.retryAt) return;
+  const observation = lastFix;
   const target = trackingTarget();
-  const { location, employeeId } = lastFix;
+  const { location, employeeId } = observation;
   lastFix = undefined;
-  if (!target || Date.now() - location.capturedAt > 30_000) return;
+  if (!target) return;
+  if (Date.now() - location.capturedAt > maxFixAge) {
+    if (watch.retryAt) restartLocationTracking();
+    return;
+  }
+  if (watch.retryAt) {
+    watch.retryAt = 0;
+    updateTracking();
+  }
   if (presenceAt(location, target.site) !== (target.current ? 'outside' : 'inside')) return;
   observing = true;
   try {
-    const shift = await request('attendance', { employeeId, shiftId: target.shiftId, action: 'observe', location });
-    await refresh({ force: true });
+    let shift;
+    try {
+      shift = await request('attendance', { shiftId: target.shiftId, action: 'observe', location });
+    } catch (error) {
+      if (watcher !== watch) return;
+      if (!error.status || error.status >= 500 || error.status === 429) {
+        lastFix ??= observation;
+        watch.retryAt = Date.now() + observationRetryDelay;
+        updateTracking();
+      } else {
+        setWatchStatus(error.message);
+      }
+      return;
+    }
+    if (actorId !== employeeId) return;
+    await refreshAfterSave();
     if (shift && actorId === employeeId) {
       showToast(target.current ? `Clocked out automatically after leaving ${target.site.name}.`
         : `Clocked back in automatically at ${target.site.name}.`);
     }
-  } catch (error) {
-    setWatchStatus(error.message);
   } finally {
     observing = false;
   }
@@ -1714,8 +1748,16 @@ window.addEventListener('hashchange', () => {
 
 export function startWorkspace() {
   loadSession();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') restartLocationTracking();
+  });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) restartLocationTracking();
+  });
+  window.addEventListener('online', restartLocationTracking);
+  window.addEventListener('offline', updateTracking);
   setInterval(tick, 1000);
   setInterval(() => {
-    if (!pending && session?.actor) refresh().catch(() => {});
+    if (!pending && !observing && session?.actor) refresh().catch(() => {});
   }, 15000);
 }

@@ -1,8 +1,8 @@
 export const fenceRadius = 100;
 export const maxAdditionalShootSites = 9;
+export const maxFixAge = 30_000;
 
 const minute = 60_000;
-const maxFixAge = 30_000;
 
 export class AttendanceError extends Error {
   constructor(message, status = 400) {
