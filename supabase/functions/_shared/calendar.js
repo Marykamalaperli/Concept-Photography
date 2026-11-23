@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { additionalShootLocations } from './attendance-policy.js';
 
 const digest = (token) => createHash('sha256').update(token).digest('hex');
 const encoder = new TextEncoder();
@@ -37,6 +38,7 @@ export function formatCalendar(tasks, site) {
     'CALSCALE:GREGORIAN', 'X-WR-CALNAME:Concept Photography Schedule'];
   for (const task of tasks) {
     const stamp = icalDate(task.calendar_updated_at);
+    const locations = [task.location, ...additionalShootLocations(task).map((location, index) => location.name || `Location ${index + 2}`)];
     lines.push(
       'BEGIN:VEVENT',
       `UID:concept-task-${task.id}@${site.hostname}`,
@@ -46,7 +48,7 @@ export function formatCalendar(tasks, site) {
       `DTSTART:${icalDate(task.start_at)}`,
       `DTEND:${icalDate(task.start_at + task.estimate * 60_000)}`,
       `SUMMARY:${calendarText(task.title)}`,
-      `LOCATION:${calendarText(task.location)}`,
+      `LOCATION:${calendarText(locations.join(' / '))}`,
       `PRIORITY:${task.priority ? 1 : 5}`,
       `URL:${site.href}`,
       'END:VEVENT',
@@ -102,7 +104,7 @@ export function createCalendar({ projectUrl, workspaceUrl, adminAuth }) {
       `, tokenHash);
       if (!owner || (owner.is_admin && !await adminAuth.identity(db, owner.id))) return null;
       const assignments = await db.all(`
-        SELECT tasks.id, title, location, start_at, estimate, priority, calendar_updated_at, calendar_sequence
+        SELECT tasks.id, title, location, additional_sites, start_at, estimate, priority, calendar_updated_at, calendar_sequence
         FROM tasks JOIN task_assignments ON task_assignments.task_id = tasks.id
         JOIN calendar_feeds ON calendar_feeds.employee_id = task_assignments.employee_id
         JOIN employees ON employees.id = task_assignments.employee_id

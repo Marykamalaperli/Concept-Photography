@@ -1,4 +1,4 @@
-import { assignedTo, availableShoots, fenceRadius, presenceAt, returnSite, shootSite } from './attendance-policy.js';
+import { additionalShootLocations, assignedTo, availableShoots, fenceRadius, maxAdditionalShootSites, presenceAt, returnSite, shootSites } from './attendance-policy.js';
 import { loginView, passwordField, togglePassword, workspaceRequest, workspaceSessionKey } from './access-view.js';
 import { financeCsv, financeReport } from './finance-report.js';
 import {
@@ -265,9 +265,9 @@ function googleMapsUrl({ latitude, longitude }) {
   return `https://www.google.com/maps/search/?api=1&query=${pin}`;
 }
 
-function mapLink(site) {
+function mapLink(site, named = false) {
   if (!site) return '';
-  return `<a class="text-link" href="${e(googleMapsUrl(site))}" target="_blank" rel="noopener noreferrer">Open in Google Maps${icon('external-link')}</a>`;
+  return `<a class="text-link" href="${e(googleMapsUrl(site))}" target="_blank" rel="noopener noreferrer"${named ? ` aria-label="Open in Google Maps · ${e(site.name)}"` : ''}>Open in Google Maps${icon('external-link')}</a>`;
 }
 
 function dashboard() {
@@ -322,7 +322,10 @@ function clockCard() {
       ${!shift && sites.length ? `<label class="clock-site">Check-in site
         <select id="clock-target">
           ${state.office ? '<option value="">' + e(state.office.name) + '</option>' : ''}
-          ${sites.map((task) => `<option value="${task.id}" ${String(task.id) === clockTarget ? 'selected' : ''}>${e(task.title)} · ${e(task.location)}</option>`).join('')}
+          ${sites.map((task) => {
+            const count = shootSites(task).length;
+            return `<option value="${task.id}" ${String(task.id) === clockTarget ? 'selected' : ''}>${e(task.title)} · ${count > 1 ? `${count} locations` : e(task.location)}</option>`;
+          }).join('')}
         </select></label>` : ''}
       ${(shift || !sites.length) && boundSite ? `<p class="hr-clock-site">${icon('map-pin')}${e(boundSite.name)}</p>` : ''}
       <div class="hr-clock-buttons">${clockButton('Check in', 'log-in', canClockIn)}${clockButton('Check out', 'log-out', canClockOut)}</div>
@@ -469,7 +472,7 @@ function workControls(task) {
       return actionButton('Clock out of shoot', 'clock', 'log-out', 'primary', task.id) + complete;
     }
     if (task.completed_at) return '';
-    if (!shootSite(task)) return '<p class="task-location-note">A shoot location needs to be set before check-in.</p>';
+    if (!shootSites(task).length) return '<p class="task-location-note">A shoot location needs to be set before check-in.</p>';
     if (!shift && checkInShoots().some((item) => item.id === task.id)) return actionButton('Clock in at shoot', 'clock', 'log-in', 'primary', task.id);
     return `<p class="task-location-note">${shift ? 'Clock out of your current site before starting this shoot.' :
       Date.now() < task.start_at - 30 * 60_000 ? 'Shoot check-in opens 30 minutes before the start.' : 'The shoot check-in window has ended.'}</p>`;
@@ -484,6 +487,7 @@ function workControls(task) {
 
 function taskCard(task, inDialog = false) {
   const isShoot = task.category === 'Photo shoot';
+  const sites = shootSites(task);
   const editing = manager() && isShoot && task.completed_at ? state.tasks.find((item) => item.parent_shoot_id === task.id) : null;
   return `<article class="${inDialog ? '' : 'panel task-card'}">
     ${inDialog ? '' : `<div class="panel-head"><div><h2>${e(task.title)}</h2><p>${e(task.category)}</p></div>
@@ -493,7 +497,9 @@ function taskCard(task, inDialog = false) {
         manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
       <div class="inline">${icon('calendar-days')}${task.shoot_status === 'postponed' ? 'Awaiting a new date' :
         `${shortDate.format(task.start_at)} · ${time(task.start_at)}${isShoot || task.parent_shoot_id ? ` – ${shootEndLabel(task)}` : ''} IST`}</div>
-      <div class="inline">${icon('map-pin')}${e(task.location)} ${mapLink(shootSite(task))}</div>
+      ${sites.length > 1 ? `<div class="shoot-site-list"><strong>Shoot locations</strong><ul>
+        ${sites.map((site) => `<li class="inline">${icon('map-pin')}<span>${e(site.name)}</span> ${mapLink(site, true)}</li>`).join('')}
+      </ul></div>` : `<div class="inline">${icon('map-pin')}${e(task.location)} ${mapLink(sites[0])}</div>`}
       ${task.source_shoot_title ? `<div class="inline">${icon('camera')}<span>Shoot · ${e(task.source_shoot_title)}</span></div>` : ''}
       ${task.delivery_due_at ? `<div class="inline">${icon('clock-3')}<span>Delivery due ${shortDate.format(task.delivery_due_at)} at ${time(task.delivery_due_at)} IST</span></div>` : ''}
       ${task.client_name ? `<div class="inline">${icon('contact-round')}${e(task.client_name)} · <a class="map-link" href="tel:${e(task.client_phone)}">${e(task.client_phone)}</a></div>` : ''}
@@ -644,13 +650,15 @@ function mobileAlertControls() {
 
 function locationCheckSites() {
   const sites = new Map();
+  const key = (site) => site.taskId ? `${site.taskId}:${site.latitude},${site.longitude}` : 'office';
   const bound = trackingTarget()?.site;
-  if (bound) sites.set(String(bound.taskId ?? 'office'), bound);
+  if (bound) sites.set(key(bound), bound);
   if (state.office && !sites.has('office')) sites.set('office', state.office);
   for (const task of state.tasks) {
     if (assignedTo(task, actorId) && task.shoot_status === 'booked' && !task.completed_at && task.start_at + task.estimate * 60_000 > Date.now()) {
-      const site = shootSite(task);
-      if (site && !sites.has(String(task.id))) sites.set(String(task.id), { ...site, name: `${task.title} · ${site.name}` });
+      for (const site of shootSites(task)) {
+        if (!sites.has(key(site))) sites.set(key(site), { ...site, name: `${task.title} · ${site.name}` });
+      }
     }
   }
   return sites;
@@ -961,15 +969,57 @@ function clientForm(client) {
   `, 'Save client'));
 }
 
-function mapFields(site = {}) {
-  return `<label class="full">Google Maps link<input name="mapsUrl" type="url" maxlength="2048" required placeholder="https://maps.app.goo.gl/…" value="${e(site.maps_url)}"></label>
+function mapFields(site = {}, additional = false) {
+  const fields = additional ? ['additionalMapsUrl', 'additionalLatitude', 'additionalLongitude'] : ['mapsUrl', 'latitude', 'longitude'];
+  return `<div class="full form-grid map-fields">
+    <label class="full">${additional ? 'Google Maps link for this location' : 'Google Maps link'}<input name="${fields[0]}" type="url" maxlength="2048" required placeholder="https://maps.app.goo.gl/…" value="${e(site.maps_url)}"></label>
     <details class="full coordinates">
       <summary>Enter pin coordinates if the link can’t be resolved</summary>
       <div class="form-grid">
-        <label>Latitude<input name="latitude" type="number" min="-90" max="90" step="any" value="${e(site.latitude)}"></label>
-        <label>Longitude<input name="longitude" type="number" min="-180" max="180" step="any" value="${e(site.longitude)}"></label>
+        <label>Latitude<input name="${fields[1]}" type="number" min="-90" max="90" step="any" value="${e(site.latitude)}"></label>
+        <label>Longitude<input name="${fields[2]}" type="number" min="-180" max="180" step="any" value="${e(site.longitude)}"></label>
       </div>
-    </details>`;
+    </details>
+  </div>`;
+}
+
+function additionalSiteFields(site, number, allowRemove) {
+  return `<fieldset class="extra-shoot-site form-grid" data-shoot-site>
+    <legend>Location ${number}</legend>
+    <label class="full">Location name (optional)<input name="additionalLocationName" maxlength="100" value="${e(site.name)}"></label>
+    ${mapFields(site, true)}
+    <div class="full" ${allowRemove ? '' : 'hidden'}>${actionButton('Remove location', 'remove-shoot-site', 'trash-2', 'secondary')}</div>
+  </fieldset>`;
+}
+
+function additionalSiteControls(task) {
+  const saved = additionalShootLocations(task);
+  const rows = saved.length ? saved : [{}];
+  return `<label class="full shoot-multiple-toggle"><input name="multipleShootLocations" type="checkbox" aria-controls="additional-shoot-sites"
+    ${saved.length ? 'checked' : ''}> Multiple shoot locations</label>
+    <fieldset class="full additional-shoot-sites" id="additional-shoot-sites" ${saved.length ? '' : 'hidden disabled'}>
+      <legend>Additional locations</legend>
+      <p class="field-note">Add a Google Maps link for each extra stop. Assigned crew can check in at any saved pin.</p>
+      <div class="additional-shoot-list" data-shoot-site-list>${rows.map((site, index) => additionalSiteFields(site, index + 2, rows.length > 1)).join('')}</div>
+      <div ${rows.length >= maxAdditionalShootSites ? 'hidden' : ''}>${actionButton('Add another location', 'add-shoot-site', 'plus', 'secondary')}</div>
+    </fieldset>`;
+}
+
+function updateSiteRows(group) {
+  const rows = group.querySelectorAll('[data-shoot-site]');
+  rows.forEach((row, index) => {
+    row.querySelector('legend').textContent = `Location ${index + 2}`;
+    row.querySelector('[data-action="remove-shoot-site"]').parentElement.hidden = rows.length === 1;
+  });
+  group.querySelector('[data-action="add-shoot-site"]').parentElement.hidden = rows.length >= maxAdditionalShootSites;
+}
+
+function addSiteRow(group) {
+  const list = group.querySelector('[data-shoot-site-list]');
+  if (list.children.length >= maxAdditionalShootSites) return;
+  list.insertAdjacentHTML('beforeend', additionalSiteFields({}, list.children.length + 2, true));
+  updateSiteRows(group);
+  list.lastElementChild.querySelector('[name="additionalMapsUrl"]').focus();
 }
 
 function locationForm() {
@@ -1038,6 +1088,7 @@ function taskForm(task, type = 'all', sourceShoot = null) {
           <label>Owner mobile number<input name="clientPhone" type="tel" required maxlength="30" value="${e(task?.client_phone)}"></label>
         </fieldset>
         ${mapFields({ maps_url: task?.maps_url, latitude: task?.site_latitude, longitude: task?.site_longitude })}
+        ${additionalSiteControls(task)}
         <label class="full">Expected shoot income (₹)<input name="income" type="number" required min="0" max="999999999.99" step="0.01" value="${task ? task.income_paise / 100 : ''}"></label>
         <label class="full">Payment due date (optional)<input name="paymentDueOn" type="date" value="${e(task?.payment_due_on)}"></label>
       </div>
@@ -1343,6 +1394,14 @@ document.addEventListener('click', (event) => {
     case 'edit-client': clientForm(state.clients.find((client) => client.id === id)); break;
     case 'new-task': taskForm(); break;
     case 'new-shoot': taskForm(null, 'shoot'); break;
+    case 'add-shoot-site': addSiteRow(button.closest('.additional-shoot-sites')); break;
+    case 'remove-shoot-site': {
+      const group = button.closest('.additional-shoot-sites');
+      button.closest('[data-shoot-site]').remove();
+      updateSiteRows(group);
+      group.querySelector('[data-action="add-shoot-site"]').focus();
+      break;
+    }
     case 'new-board-task': taskForm(null, 'board'); break;
     case 'shoot-done':
       mutate(button, async () => {
@@ -1524,6 +1583,9 @@ document.addEventListener('change', (event) => {
   }
   const form = input.form;
   if (form?.dataset.form !== 'tasks') return;
+  if (input.name === 'multipleShootLocations') {
+    toggleFields(form.querySelector('.additional-shoot-sites'), input.checked);
+  }
   if (['category', 'shootFrom', 'shootTo', 'employeeId', 'crew', 'assignment', 'shootStatus'].includes(input.name)) {
     const notice = form.querySelector('[data-conflicts]');
     if (notice) {
@@ -1557,10 +1619,8 @@ document.addEventListener('change', (event) => {
 });
 
 document.addEventListener('input', (event) => {
-  if (event.target.name !== 'mapsUrl') return;
-  const { latitude, longitude } = event.target.form.elements;
-  latitude.value = '';
-  longitude.value = '';
+  if (!['mapsUrl', 'additionalMapsUrl'].includes(event.target.name)) return;
+  event.target.closest('.map-fields').querySelectorAll('input[type="number"]').forEach((field) => { field.value = ''; });
 });
 
 document.addEventListener('submit', (event) => {
@@ -1582,6 +1642,19 @@ document.addEventListener('submit', (event) => {
       data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
     }
     if (data.parentShootId) data.deliveryDueAt = `${data.deliveryDue}:00+05:30`;
+    if (data.category === 'Photo shoot') {
+      const names = fields.getAll('additionalLocationName');
+      const latitudes = fields.getAll('additionalLatitude');
+      const longitudes = fields.getAll('additionalLongitude');
+      data.additionalSites = fields.getAll('additionalMapsUrl').map((mapsUrl, index) => ({
+        mapsUrl, name: names[index], latitude: latitudes[index], longitude: longitudes[index],
+      }));
+      delete data.additionalMapsUrl;
+      delete data.additionalLocationName;
+      delete data.additionalLatitude;
+      delete data.additionalLongitude;
+      delete data.multipleShootLocations;
+    }
   }
   if (fields.has('acceptConflicts')) {
     data.acknowledgedConflicts = [...form.querySelectorAll('[data-conflict-key]')].map((item) => item.dataset.conflictKey);

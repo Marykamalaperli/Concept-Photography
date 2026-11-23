@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { authenticatedEmployee, createSession, endSession, hashPassword, passwordMatches, sessionFields } from './accounts.js';
 import { mapsLocation } from './maps.js';
-import { attendanceTransition, shootSite } from './attendance-policy.js';
+import { additionalShootLocations, attendanceTransition, maxAdditionalShootSites, shootSites } from './attendance-policy.js';
 import { refreshReminders } from './reminders.js';
 import { createHr } from './hr.js';
 import { validDay } from './hr-policy.js';
@@ -119,6 +119,24 @@ async function siteFrom(body) {
   }
 }
 
+async function additionalSitesFrom(value) {
+  if (!Array.isArray(value) || value.length > maxAdditionalShootSites) {
+    throw new RequestError(`A shoot can have up to ${maxAdditionalShootSites + 1} locations.`);
+  }
+  return Promise.all(value.map(async (entry, index) => {
+    try {
+      if (!entry || typeof entry !== 'object') throw new RequestError('Enter a Google Maps link.');
+      const name = optional(entry.name, 'location name', 100);
+      const mapsUrl = text(entry.mapsUrl, 'Google Maps link', 2048);
+      return { name, ...await siteFrom({ ...entry, mapsUrl }) };
+    } catch (error) {
+      throw new RequestError(`Location ${index + 2} · ${error.message}`);
+    }
+  }));
+}
+
+const coordinateKey = ({ latitude, longitude }) => `${latitude},${longitude}`;
+
 export function createApi(db, { bearer = false, secureCookies = false, adminAuth, mobilePush, calendar, siteOrigin } = {}) {
   const loginAttempts = new Map();
   const sessionOptions = { bearer, secureCookies };
@@ -202,7 +220,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       employeesQuery,
       db.all(`
         SELECT tasks.id, title, employee_id, start_at, estimate, location, category, completed_at,
-          site_latitude, site_longitude, maps_url, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone,
+          site_latitude, site_longitude, maps_url, additional_sites, priority, is_open, shoot_status, blocked_reason, clients.name AS client_name, clients.phone AS client_phone,
           parent_shoot_id, delivery_due_at, (SELECT source.title FROM tasks source WHERE source.id = tasks.parent_shoot_id) AS source_shoot_title
           ${manager ? ', client_id, income_paise, payment_due_on' : ''}
         FROM tasks JOIN employees ON employees.id = tasks.employee_id LEFT JOIN clients ON clients.id = tasks.client_id
@@ -411,7 +429,10 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
     if (!actor.is_admin && (isShoot || body.id)) throw new RequestError('You can add individual tasks to your own board.', 403);
     const isOpen = actor.is_admin && body.assignment === 'open';
 
-    const site = isShoot ? await siteFrom(body) : null;
+    const [site, submittedSites] = isShoot ? await Promise.all([
+      siteFrom(body),
+      Object.hasOwn(body, 'additionalSites') ? additionalSitesFrom(body.additionalSites) : null,
+    ]) : [null, null];
     const income = isShoot ? paise(body.income, true) : 0;
     return db.transaction(async (store) => {
       const current = body.id ? await getTask(body.id, store) : null;
@@ -455,7 +476,10 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
           if (!member.has_login && !member.is_admin) throw new RequestError('Set up each crew member’s login before assigning a shoot.');
         }
       }
-      const siteChanged = current && (current.site_latitude !== (site?.latitude ?? null) || current.site_longitude !== (site?.longitude ?? null));
+      const additionalSites = submittedSites ?? additionalShootLocations(current);
+      const newPins = isShoot ? [site, ...additionalSites].map(coordinateKey).sort() : [];
+      if (new Set(newPins).size !== newPins.length) throw new RequestError('Use a different Google Maps pin for each shoot location.');
+      const siteChanged = current && isShoot && shootSites(current).map(coordinateKey).sort().join('|') !== newPins.join('|');
       if (current) {
         const hasTime = await store.get('SELECT 1 FROM task_sessions WHERE task_id = ?', current.id);
         if (hasTime && (isOpen || employee.id !== current.employee_id || crewChanged)) throw new RequestError('Work with recorded time cannot be reassigned.', 409);
@@ -481,13 +505,13 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       const dueOn = isShoot && Object.hasOwn(body, 'paymentDueOn') ? paymentDueDate(body.paymentDueOn) : current?.payment_due_on ?? null;
       const values = [title, employee.id, startAt, estimate, location, category, site?.latitude ?? null,
         site?.longitude ?? null, site?.maps_url ?? null, clientId, income, Number(actor.is_admin && !isOpen), Number(isOpen), status,
-        parentShootId, deliveryDueAt, dueOn];
+        parentShootId, deliveryDueAt, dueOn, JSON.stringify(additionalSites)];
       let task;
       if (current) {
         task = await store.get(`
           UPDATE tasks SET title = ?, employee_id = ?, start_at = ?, estimate = ?, location = ?, category = ?,
             site_latitude = ?, site_longitude = ?, maps_url = ?, client_id = ?, income_paise = ?, priority = ?, is_open = ?, shoot_status = ?,
-            parent_shoot_id = ?, delivery_due_at = ?, payment_due_on = ?
+            parent_shoot_id = ?, delivery_due_at = ?, payment_due_on = ?, additional_sites = ?
           WHERE id = ? RETURNING *
         `, ...values, current.id);
         if (!completed && (current.start_at !== startAt || current.employee_id !== employee.id || isOpen || status !== current.shoot_status)) {
@@ -497,8 +521,8 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       } else {
         task = await store.get(`
           INSERT INTO tasks (title, employee_id, start_at, estimate, location, category, site_latitude,
-            site_longitude, maps_url, client_id, income_paise, priority, is_open, shoot_status, parent_shoot_id, delivery_due_at, payment_due_on)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+            site_longitude, maps_url, client_id, income_paise, priority, is_open, shoot_status, parent_shoot_id, delivery_due_at, payment_due_on, additional_sites)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
         `, ...values);
       }
       if (crewChanged) {
@@ -620,7 +644,7 @@ export function createApi(db, { bearer = false, secureCookies = false, adminAuth
       if (body.action === 'start' || (body.action === 'complete' && task.category === 'Photo shoot')) {
         if (task.category === 'Photo shoot') {
           const current = await store.get('SELECT site FROM attendance WHERE employee_id = ? AND clock_out IS NULL', actor.id);
-          if (!shootSite(task) || !current?.site || JSON.parse(current.site).taskId !== task.id) {
+          if (!shootSites(task).length || !current?.site || JSON.parse(current.site).taskId !== task.id) {
             throw new RequestError('Clock in at this shoot before working on it.', 409);
           }
         }

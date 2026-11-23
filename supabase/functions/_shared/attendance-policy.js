@@ -1,4 +1,5 @@
 export const fenceRadius = 100;
+export const maxAdditionalShootSites = 9;
 
 const minute = 60_000;
 const maxFixAge = 30_000;
@@ -22,10 +23,22 @@ export function siteCoordinates(value) {
   return coordinates;
 }
 
-export function shootSite(task) {
+function shootSite(task) {
   const coordinates = { latitude: task.site_latitude, longitude: task.site_longitude };
   if (task.category !== 'Photo shoot' || !coordinatesAreValid(coordinates)) return null;
   return { name: task.location, ...coordinates, taskId: task.id };
+}
+
+export function additionalShootLocations(task) {
+  return JSON.parse(task?.additional_sites ?? '[]');
+}
+
+export function shootSites(task) {
+  const primary = shootSite(task);
+  if (!primary) return [];
+  return [primary, ...additionalShootLocations(task).map(({ name, latitude, longitude }, index) => ({
+    name: name || `Location ${index + 2}`, latitude, longitude, taskId: task.id,
+  }))];
 }
 
 export function assignedTo(task, employeeId) {
@@ -78,7 +91,8 @@ export function returnSite(shift, office, tasks, employeeId, now) {
   if (!shift?.resume_pending || !shift.site) return null;
   const previous = JSON.parse(shift.site);
   const configured = previous.taskId
-    ? availableShoots(tasks, employeeId, now).map(shootSite).find((site) => site.taskId === previous.taskId)
+    ? availableShoots(tasks, employeeId, now).filter((task) => task.id === previous.taskId).flatMap(shootSites)
+      .find((site) => site.latitude === previous.latitude && site.longitude === previous.longitude)
     : office;
   if (configured?.latitude !== previous.latitude || configured?.longitude !== previous.longitude) return null;
   return previous;
@@ -111,7 +125,8 @@ export function attendanceTransition({ command, latest, office, tasks, employeeI
   if (command.action === 'in' && !current) {
     const useShoot = command.taskId != null;
     const site = useShoot
-      ? availableShoots(tasks, employeeId, now).map(shootSite).find((item) => item.taskId === Number(command.taskId))
+      ? availableShoots(tasks, employeeId, now).filter((task) => task.id === Number(command.taskId)).flatMap(shootSites)
+        .sort((left, right) => distanceMetres(location, left) - distanceMetres(location, right))[0]
       : office;
     if (!site) {
       if (useShoot) throw new AttendanceError('This shoot location is available only to its assignee during the scheduled check-in window.', 403);

@@ -198,5 +198,18 @@ export function openStore(db) {
       throw error;
     }
   }
+  if (db.prepare('PRAGMA user_version').get().user_version < 6) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        ALTER TABLE tasks ADD COLUMN additional_sites TEXT NOT NULL DEFAULT '[]' CHECK (json_type(additional_sites) = 'array');
+        PRAGMA user_version = 6;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   return db;
 }

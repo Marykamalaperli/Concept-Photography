@@ -210,6 +210,7 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.equal((await staff('state')).actor.name, 'Lead Team Member');
   const office = { latitude: 17.385, longitude: 78.4867, accuracy: 8 };
   const shootCoords = { ...office, latitude: 17.388 };
+  const secondStop = { ...office, latitude: 17.391 };
   const maps = (location) => `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
   await admin('office', { name: 'Office', mapsUrl: maps(office) }, 403, { Origin: 'https://other.example.com' });
   await admin('office', { name: 'Office', mapsUrl: maps(office) });
@@ -219,12 +220,18 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
     estimate: 90, startAt: new Date(Date.now() + 10 * 60_000).toISOString(), mapsUrl: maps(shootCoords),
     clientName: 'Client Owner', clientPhone: '+91 99999 11111', income: '12000.50',
   };
-  const assigned = await admin('tasks', createShoot);
+  const additionalSites = [{ name: 'Rooftop', mapsUrl: maps(secondStop) }];
+  const assigned = await admin('tasks', { ...createShoot, additionalSites });
+  await admin('tasks', { ...createShoot, id: assigned.id, additionalSites: [{ mapsUrl: maps(shootCoords) }] }, 400);
+  await admin('tasks', { ...createShoot, id: assigned.id, additionalSites: [{ mapsUrl: 'https://example.net/maps?query=0,0' }] }, 400);
   const open = await admin('tasks', { ...createShoot, assignment: 'open', title: 'Open shoot' });
   assert.equal(assigned.priority, 1);
   assert.equal(open.is_open, 1);
   const before = await staff('state');
   assert.deepEqual(before.tasks.map((task) => task.id), [assigned.id]);
+  assert.deepEqual(JSON.parse(before.tasks[0].additional_sites), [{
+    name: 'Rooftop', maps_url: maps(secondStop), latitude: secondStop.latitude, longitude: secondStop.longitude,
+  }]);
   assert.equal(before.tasks[0].client_name, 'Client Owner');
   assert.equal('income_paise' in before.tasks[0], false);
   assert.equal('clients' in before, false);
@@ -232,6 +239,7 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.equal(before.employees.length, 1);
   assert.equal(before.openWork[0].id, open.id);
   assert.equal('maps_url' in before.openWork[0], false);
+  assert.equal('additional_sites' in before.openWork[0], false);
   await staff('task-action', { taskId: open.id, action: 'complete' }, 403);
   await other('task-action', { taskId: assigned.id, employeeId: photographer.id, action: 'start' }, 403);
 
@@ -254,29 +262,33 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
     action, location: location && { ...location, capturedAt: Date.now() }, ...body,
   }, expected);
   await clock(staff, 'in', null, {}, 400);
-  await clock(other, 'in', shootCoords, { taskId: assigned.id, employeeId: photographer.id }, 403);
+  await clock(other, 'in', secondStop, { taskId: assigned.id, employeeId: photographer.id }, 403);
   await clock(staff, 'in', office, { taskId: assigned.id }, 422);
   await clock(staff, 'in', { ...office, accuracy: 100 }, {}, 422);
-  const shift = await clock(staff, 'in', shootCoords, { taskId: assigned.id, employeeId: colleague.id });
+  const shift = await clock(staff, 'in', secondStop, { taskId: assigned.id, employeeId: colleague.id });
   assert.equal(shift.employee_id, photographer.id);
   assert.equal(JSON.parse(shift.site).taskId, assigned.id);
-  const nearEdge = { ...shootCoords, latitude: 17.38892 };
+  assert.equal(JSON.parse(shift.site).name, 'Rooftop');
+  await admin('tasks', { ...createShoot, id: assigned.id, additionalSites: [] }, 409);
+  const nearEdge = { ...secondStop, latitude: 17.39192 };
   assert.equal(await clock(staff, 'observe', nearEdge, { shiftId: shift.id }), null);
-  await clock(staff, 'out', office, { shiftId: shift.id }, 422);
+  await clock(staff, 'out', shootCoords, { shiftId: shift.id }, 422);
   const departure = await clock(staff, 'observe', office, { shiftId: shift.id });
   assert.equal(departure.out_reason, 'geofence');
   assert.equal(departure.resume_pending, 1);
   assert.ok((await staff('state')).sessions.every((entry) => entry.end_at !== null));
-  assert.equal(await clock(staff, 'observe', shootCoords, { shiftId: shift.id + 1 }), null);
-  const returned = await clock(staff, 'observe', shootCoords, { shiftId: shift.id });
+  assert.equal(await clock(staff, 'observe', secondStop, { shiftId: shift.id + 1 }), null);
+  assert.equal(await clock(staff, 'observe', shootCoords, { shiftId: shift.id }), null);
+  const returned = await clock(staff, 'observe', secondStop, { shiftId: shift.id });
   assert.equal(returned.in_reason, 'geofence');
+  assert.equal(JSON.parse(returned.site).name, 'Rooftop');
   const finished = await staff('task-action', { taskId: assigned.id, action: 'complete' });
   const correction = {
     ...createShoot, id: assigned.id, title: 'Portrait shoot (updated)', location: 'New courtyard name',
     startAt: '2026-11-21T23:00:00+05:30', endAt: '2026-11-22T02:30:00+05:30', mapsUrl: maps(office),
   };
   await admin('tasks', correction, 409);
-  await clock(staff, 'out', shootCoords, { shiftId: returned.id });
+  await clock(staff, 'out', secondStop, { shiftId: returned.id });
   const tracked = await staff('state');
   await staff('tasks', correction, 403);
   await admin('tasks', { ...correction, endAt: correction.startAt }, 400);
@@ -288,10 +300,12 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.equal(edited.start_at, Date.parse(correction.startAt));
   assert.equal(edited.estimate, 210);
   assert.equal(edited.site_latitude, office.latitude);
+  assert.equal(edited.additional_sites, assigned.additional_sites);
   const afterEdit = await staff('state');
   assert.deepEqual(afterEdit.attendance, tracked.attendance);
   assert.deepEqual(afterEdit.sessions, tracked.sessions);
   assert.equal(afterEdit.tasks.find((task) => task.id === assigned.id).title, correction.title);
+  assert.equal((await admin('tasks', { ...correction, additionalSites: [] })).additional_sites, '[]');
 
   const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(Date.now());
   const payment = await admin('payments', { taskId: assigned.id, amount: '1000.50', date, note: 'Deposit' });
@@ -542,12 +556,14 @@ test('calendar events use stable identifiers, UTC times, and safe UTF-8 line fol
     id: 5, start_at: start, estimate: 90, priority: 1,
     title: 'చిత్రీకరణ'.repeat(10) + ', studio; take\nEND:VEVENT',
     location: 'Studio A', calendar_updated_at: start - 60_000, calendar_sequence: 2,
+    additional_sites: JSON.stringify([{ name: 'Studio B', latitude: 17.39, longitude: 78.48 }]),
   };
   const calendar = formatCalendar([task], site);
   const unfolded = calendar.replace(/\r\n /g, '');
   assert.match(unfolded, /UID:concept-task-5@studio\.example\.invalid/);
   assert.match(unfolded, /DTSTART:20261121T043000Z\r\nDTEND:20261121T060000Z/);
   assert.match(unfolded, /SEQUENCE:2/);
+  assert.match(unfolded, /LOCATION:Studio A \/ Studio B/);
   assert.match(unfolded, /\\, studio\\; take\\nEND:VEVENT/);
   assert.equal(calendar.split('\r\n').filter((line) => line === 'END:VEVENT').length, 1);
   assert.ok(calendar.split('\r\n').every((line) => Buffer.byteLength(line) <= 75));

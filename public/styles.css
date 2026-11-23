@@ -175,6 +175,13 @@ dialog::backdrop{background:#1c171480}
 .coordinates{font-size:11px;color:var(--muted)}
 .coordinates summary{cursor:pointer}
 .coordinates .form-grid{margin-top:9px}
+.form-grid .shoot-multiple-toggle{display:flex;align-items:center;gap:9px;min-height:40px;padding:8px 10px;border:1px solid var(--stroke);border-radius:8px;background:var(--paper);cursor:pointer}
+.shoot-multiple-toggle input{width:16px;height:16px;flex:none;accent-color:var(--accent)}
+.additional-shoot-sites,.additional-shoot-list{display:grid;gap:10px;min-width:0}
+.additional-shoot-sites,.extra-shoot-site{margin:0;min-width:0;padding:10px;border:1px solid var(--stroke);border-radius:8px}
+.additional-shoot-sites legend,.extra-shoot-site legend{padding:0 5px;color:var(--muted);font-size:12px;font-weight:650}
+.shoot-site-list ul{margin:5px 0 0;padding:0;display:grid;gap:6px}
+.shoot-site-list li{list-style:none}
 .task-details .inline{flex-wrap:wrap;gap:6px}
 .task-details .text-link{padding:0}
 .table-wrap td{overflow-wrap:anywhere}
