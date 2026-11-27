@@ -1,6 +1,8 @@
 export function openStore(db) {
   db.exec(`
     PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = 5000;
+    PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS employees (
       id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
       email TEXT NOT NULL COLLATE NOCASE UNIQUE, color TEXT NOT NULL
@@ -204,6 +206,71 @@ export function openStore(db) {
       db.exec(`
         ALTER TABLE tasks ADD COLUMN additional_sites TEXT NOT NULL DEFAULT '[]' CHECK (json_type(additional_sites) = 'array');
         PRAGMA user_version = 6;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  if (db.prepare('PRAGMA user_version').get().user_version < 7) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        CREATE INDEX attendance_employee_date ON attendance(employee_id, clock_in DESC);
+        CREATE INDEX task_employee_date ON tasks(employee_id, start_at);
+        CREATE INDEX payment_task ON payments(task_id);
+        CREATE INDEX auth_session_expiry ON auth_sessions(expires_at);
+        CREATE UNIQUE INDEX one_active_admin ON employees(is_admin) WHERE is_admin = 1 AND archived = 0;
+        CREATE TABLE login_limits (
+          key TEXT PRIMARY KEY, count INTEGER NOT NULL, reset_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE INDEX login_limit_expiry ON login_limits(reset_at);
+
+        ALTER TABLE tasks ADD COLUMN calendar_sequence INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE tasks ADD COLUMN calendar_updated_at INTEGER NOT NULL DEFAULT 0;
+        UPDATE tasks SET calendar_updated_at = start_at;
+        CREATE TABLE calendar_feeds (
+          employee_id INTEGER PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, last_read_at INTEGER
+        ) STRICT;
+        CREATE TRIGGER initialize_task_calendar AFTER INSERT ON tasks WHEN NEW.calendar_updated_at = 0
+        BEGIN
+          UPDATE tasks SET calendar_updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) WHERE id = NEW.id;
+        END;
+        CREATE TRIGGER update_task_calendar AFTER UPDATE OF title, employee_id, start_at, estimate, location, priority,
+          is_open, shoot_status, additional_sites ON tasks
+        WHEN (OLD.title, OLD.employee_id, OLD.start_at, OLD.estimate, OLD.location, OLD.priority, OLD.is_open, OLD.shoot_status, OLD.additional_sites)
+           IS NOT (NEW.title, NEW.employee_id, NEW.start_at, NEW.estimate, NEW.location, NEW.priority, NEW.is_open, NEW.shoot_status, NEW.additional_sites)
+        BEGIN
+          UPDATE tasks SET calendar_sequence = OLD.calendar_sequence + 1,
+            calendar_updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) WHERE id = NEW.id;
+        END;
+        CREATE TRIGGER revoke_calendar_on_identity_change AFTER UPDATE OF email, archived ON employees
+        WHEN OLD.email != NEW.email OR OLD.archived != NEW.archived
+        BEGIN
+          DELETE FROM calendar_feeds WHERE employee_id = NEW.id;
+          DELETE FROM push_subscriptions WHERE employee_id = NEW.id;
+        END;
+
+        CREATE TABLE push_settings (
+          id INTEGER PRIMARY KEY CHECK (id = 1), vapid_public_key TEXT, vapid_private_key TEXT
+        ) STRICT;
+        INSERT INTO push_settings (id) VALUES (1);
+        CREATE TABLE push_subscriptions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth_secret TEXT NOT NULL, last_test_at INTEGER
+        ) STRICT;
+        CREATE INDEX push_subscription_employee ON push_subscriptions(employee_id);
+        CREATE TABLE push_deliveries (
+          task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          start_at INTEGER NOT NULL, subscription_id INTEGER NOT NULL REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+          attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL, sent_at INTEGER,
+          PRIMARY KEY (task_id, employee_id, start_at, subscription_id)
+        ) STRICT;
+        CREATE INDEX push_delivery_due ON push_deliveries(next_attempt_at) WHERE sent_at IS NULL;
+        PRAGMA user_version = 7;
         COMMIT;
       `);
     } catch (error) {

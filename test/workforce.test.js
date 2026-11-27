@@ -6,15 +6,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Readable } from 'node:stream';
-import { createApi } from '../supabase/functions/_shared/workspace-api.js';
-import { studioDay, dayStart, dayLength, weekday, leaveLedger, timeForDay } from '../supabase/functions/_shared/hr-policy.js';
-import { formatCalendar } from '../supabase/functions/_shared/calendar.js';
-import { hashPassword } from '../supabase/functions/_shared/accounts.js';
-import { supabaseAdminAuth } from '../supabase/functions/_shared/supabase-admin.js';
-import { mapsLocation } from '../supabase/functions/_shared/maps.js';
-import { refreshReminders } from '../supabase/functions/_shared/reminders.js';
-import { createMobilePush } from '../supabase/functions/_shared/mobile-push.js';
+import { createApi } from '../lib/workspace-api.js';
+import { studioDay, dayStart, dayLength, weekday, leaveLedger, timeForDay } from '../lib/hr-policy.js';
+import { formatCalendar } from '../lib/calendar.js';
+import { hashPassword } from '../lib/accounts.js';
+import { mapsLocation } from '../lib/maps.js';
+import { refreshReminders } from '../lib/reminders.js';
+import { createMobilePush } from '../lib/mobile-push.js';
 import { financeCsv, financeReport } from '../public/finance-report.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
@@ -183,6 +181,8 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.match(document, /name="email" type="email"/);
   assert.match(document, /name="password" type="password"/);
   assert.doesNotMatch(document, /Admin Dashboard|[Ss]etup token|[Ss]et up the first admin/);
+  assert.equal((await fetch(base + '/finance-report.js')).status, 200);
+  assert.deepEqual(await (await fetch(base + '/healthz')).json(), { ok: true });
   const guest = client();
   await guest('state', null, 401);
   assert.deepEqual(await guest('session'), { actor: null });
@@ -225,6 +225,16 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await admin('tasks', { ...createShoot, id: assigned.id, additionalSites: [{ mapsUrl: maps(shootCoords) }] }, 400);
   await admin('tasks', { ...createShoot, id: assigned.id, additionalSites: [{ mapsUrl: 'https://example.net/maps?query=0,0' }] }, 400);
   const open = await admin('tasks', { ...createShoot, assignment: 'open', title: 'Open shoot' });
+  const personalCalendar = await staff('calendar/issue', {});
+  assert.equal(new URL(personalCalendar.url).origin, base);
+  const feed = await fetch(personalCalendar.url);
+  assert.equal(feed.headers.get('cache-control'), 'private, no-store');
+  const ics = await feed.text();
+  assert.match(ics, /SUMMARY:Portrait shoot/);
+  assert.match(ics, /LOCATION:Courtyard \/ Rooftop/);
+  assert.doesNotMatch(ics, /SUMMARY:Open shoot/);
+  await staff('calendar/revoke', {});
+  assert.equal((await fetch(personalCalendar.url)).status, 404);
   assert.equal(assigned.priority, 1);
   assert.equal(open.is_open, 1);
   const before = await staff('state');
@@ -456,56 +466,6 @@ test('leave accounting skips holidays and preserves unpaid balances and approved
   assert.deepEqual(timeForDay(records, date, start + dayLength, correction), {
     in: correction.clock_in, out: correction.clock_out, total: 7 * hour,
   });
-});
-
-test('hosted admin access requires the linked Supabase identity', async (t) => {
-  const store = openStore(new DatabaseSync(':memory:'));
-  t.after(() => store.close());
-  const oldPassword = 'Legacy admin password example';
-  store.prepare(`
-    INSERT INTO employees (id, name, role, email, color, is_admin, password_hash)
-    VALUES (1, 'Studio Admin', 'Administrator', 'admin@example.com', 'peach', 1, ?)
-  `).run(await hashPassword(oldPassword));
-
-  let confirmed = false;
-  let providerId = 'another-supabase-user';
-  const adminAuth = supabaseAdminAuth({
-    url: 'https://studio.example.supabase.co',
-    apiKey: 'example-anon-key',
-    async fetchAuth(url, { body, headers }) {
-      assert.equal(url.pathname, '/auth/v1/token');
-      assert.equal(url.searchParams.get('grant_type'), 'password');
-      assert.equal(headers.apikey, 'example-anon-key');
-      assert.equal(JSON.parse(body).email, 'admin@example.com');
-      return Response.json({ user: { id: providerId } });
-    },
-  });
-  adminAuth.identity = async () => confirmed ? { auth_user_id: 'linked-admin', email: 'admin@example.com' } : null;
-
-  const api = createApi(sqliteAdapter(store), { adminAuth });
-  let cookie;
-  async function call(method, path, body) {
-    const headers = { cookie, ...(body ? { 'content-type': 'application/json' } : {}) };
-    const req = Object.assign(Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []), {
-      method, headers, socket: { remoteAddress: '127.0.0.1' },
-    });
-    return api(req, { setHeader(_name, value) { cookie = value.split(';')[0]; } }, '/api/' + path);
-  }
-
-  const login = (password = oldPassword) => call('POST', 'login', { email: 'admin@example.com', password });
-  await assert.rejects(login(), { status: 401 });
-  confirmed = true;
-  await assert.rejects(login(), { status: 401 });
-  providerId = 'linked-admin';
-  const signedIn = await login('Supabase admin password example');
-  const session = await call('GET', 'session');
-  assert.equal(session.actor.is_admin, 1);
-  assert.deepEqual(signedIn.actor, { ...session.actor });
-  assert.equal('password_hash' in signedIn.actor, false);
-  assert.equal('auth_user_id' in session.actor, false);
-  confirmed = false;
-  assert.deepEqual(await call('GET', 'session'), { actor: null });
-  await assert.rejects(call('GET', 'state'), { status: 401 });
 });
 
 test('sign-in parses streamed UTF-8 JSON with no global Buffer', async (t) => {

@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { openStore } from '../store.js';
-import { hashPassword } from '../supabase/functions/_shared/accounts.js';
+import { hashPassword } from '../lib/accounts.js';
 
 async function readPassword() {
   if (!process.stdin.isTTY) {
@@ -26,6 +26,8 @@ async function readPassword() {
     process.stderr.write('\n');
   }
 }
+
+process.umask(0o077);
 
 async function main() {
   const email = process.argv[2]?.trim().toLowerCase();

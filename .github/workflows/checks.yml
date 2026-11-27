@@ -1,0 +1,34 @@
+name: Verify self-hosted workspace
+
+on:
+  pull_request:
+  push:
+    branches: [main, self-hosted-workspace-migration]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:pages
+      - if: runner.os == 'Linux'
+        name: Audit the public launcher
+        run: node scripts/audit-pages.js "$RUNNER_TEMP/lighthouse-reports"
+      - if: runner.os == 'Linux' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-launcher
+          path: ${{ runner.temp }}/lighthouse-reports/

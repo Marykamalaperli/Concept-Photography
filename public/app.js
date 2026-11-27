@@ -1,15 +1,13 @@
 import {
   additionalShootLocations, assignedTo, availableShoots, fenceRadius, maxAdditionalShootSites, maxFixAge, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
-import { loginView, passwordField, togglePassword, workspaceRequest, workspaceSessionKey } from './access-view.js';
+import { loginView, passwordField, togglePassword, workspaceRequest } from './access-view.js';
 import { financeCsv, financeReport } from './finance-report.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
 
-const apiOrigin = document.querySelector('meta[name="concept-api"]')?.content;
-const sessionKey = workspaceSessionKey(apiOrigin);
-let accessToken = sessionKey ? sessionStorage.getItem(sessionKey) : null;
+const webPushEnabled = Boolean(document.querySelector('meta[name="concept-web-push"]'));
 
 const main = document.querySelector('main');
 const sidebar = document.querySelector('#sidebar');
@@ -411,7 +409,7 @@ function schedulePage() {
   const options = [['upcoming', 'Upcoming'], ['today', 'Today'], ['all', 'All work'], ['completed', 'Completed']];
   const actions = `<div class="card-actions schedule-actions">
     ${viewLink('shoot-calendar', 'Shoot calendar')}
-    ${apiOrigin ? actionButton('Connect calendar', 'calendar-open', 'calendar-plus', 'secondary') : ''}
+    ${actionButton('Connect calendar', 'calendar-open', 'calendar-plus', 'secondary')}
     ${manager() ? actionButton('Schedule shoot', 'new-task', 'plus') : ''}
   </div>`;
   return `${heading(manager() ? 'Schedule' : 'My Schedule', manager() ? 'Review assignments, open shoots, and tracked work.' : 'Priority assignments are listed first. Times are in IST.', actions)}
@@ -630,7 +628,7 @@ function exportFinances() {
 }
 
 function mobileAlertControls() {
-  if (!apiOrigin) return { description: 'Mobile alerts are available on the hosted workspace.' };
+  if (!webPushEnabled) return { description: 'Reminders appear in this workspace while it’s open.' };
   if (needsHomeScreen()) return {
     description: 'On iPhone or iPad, use Safari’s Share menu to add this site to your Home Screen. Open the installed app and enable mobile alerts.',
   };
@@ -695,7 +693,7 @@ function deviceChecks(mobile) {
 }
 
 async function prepareMobileAlerts() {
-  if (!apiOrigin || mobileDevice || needsHomeScreen() || !supportsMobileAlerts()) return;
+  if (!webPushEnabled || mobileDevice || needsHomeScreen() || !supportsMobileAlerts()) return;
   const device = {};
   mobileDevice = device;
   try {
@@ -788,23 +786,11 @@ function tick() {
   });
 }
 
-function storeSessionToken(token) {
-  if (!sessionKey) return;
-  accessToken = token;
-  if (token) sessionStorage.setItem(sessionKey, token);
-  else sessionStorage.removeItem(sessionKey);
-}
-
 async function request(path, body) {
   try {
-    const payload = await workspaceRequest(apiOrigin, path, body, accessToken);
-    if (path === 'logout') storeSessionToken(null);
-    return payload;
+    return await workspaceRequest(path, body);
   } catch (error) {
-    if (error.status === 401 && path !== 'login') {
-      storeSessionToken(null);
-      if (session?.actor) clearWorkspace({ actor: null });
-    }
+    if (error.status === 401 && path !== 'login' && session?.actor) clearWorkspace({ actor: null });
     throw error;
   }
 }
@@ -875,9 +861,8 @@ async function refresh({ force = false } = {}) {
   }
 }
 
-export async function finishSignIn({ actor: person, token }) {
+export async function finishSignIn({ actor: person }) {
   sessionVersion++;
-  storeSessionToken(token);
   history.replaceState(null, '', '#dashboard');
   if (!person) {
     await refresh({ force: true });
@@ -904,10 +889,6 @@ async function refreshAfterSave() {
 async function loadSession() {
   const version = ++sessionVersion;
   try {
-    if (apiOrigin) {
-      if (accessToken) await refresh({ force: true });
-      return;
-    }
     const info = await request('session');
     if (version !== sessionVersion) return;
     session = info;
@@ -916,10 +897,9 @@ async function loadSession() {
       await refresh({ force: true });
       return;
     }
-    storeSessionToken(null);
     if (actor()) clearWorkspace(info);
   } catch {
-    if (version === sessionVersion && (!apiOrigin || accessToken)) {
+    if (version === sessionVersion) {
       showAuthStatus('The studio could not connect to its workspace. Retry the connection or ask your studio admin to check the deployment.');
     }
   }
@@ -974,9 +954,9 @@ function clientForm(client) {
 function mapFields(site = {}, additional = false) {
   const fields = additional ? ['additionalMapsUrl', 'additionalLatitude', 'additionalLongitude'] : ['mapsUrl', 'latitude', 'longitude'];
   return `<div class="full form-grid map-fields">
-    <label class="full">${additional ? 'Google Maps link for this location' : 'Google Maps link'}<input name="${fields[0]}" type="url" maxlength="2048" required placeholder="https://maps.app.goo.gl/…" value="${e(site.maps_url)}"></label>
-    <details class="full coordinates">
-      <summary>Enter pin coordinates if the link can’t be resolved</summary>
+    <label class="full">${additional ? 'Google Maps link for this location (optional)' : 'Google Maps link (optional)'}<input name="${fields[0]}" type="url" maxlength="2048" placeholder="https://maps.app.goo.gl/…" value="${e(site.maps_url)}"></label>
+    <details class="full coordinates" ${site.latitude != null && !site.maps_url ? 'open' : ''}>
+      <summary>Use latitude and longitude</summary>
       <div class="form-grid">
         <label>Latitude<input name="${fields[1]}" type="number" min="-90" max="90" step="any" value="${e(site.latitude)}"></label>
         <label>Longitude<input name="${fields[2]}" type="number" min="-180" max="180" step="any" value="${e(site.longitude)}"></label>
@@ -1001,7 +981,7 @@ function additionalSiteControls(task) {
     ${saved.length ? 'checked' : ''}> Multiple shoot locations</label>
     <fieldset class="full additional-shoot-sites" id="additional-shoot-sites" ${saved.length ? '' : 'hidden disabled'}>
       <legend>Additional locations</legend>
-      <p class="field-note">Add a Google Maps link for each extra stop. Assigned crew can check in at any saved pin.</p>
+      <p class="field-note">Enter a Maps link or coordinates for each stop. Assigned crew can check in at any saved pin.</p>
       <div class="additional-shoot-list" data-shoot-site-list>${rows.map((site, index) => additionalSiteFields(site, index + 2, rows.length > 1)).join('')}</div>
       <div ${rows.length >= maxAdditionalShootSites ? 'hidden' : ''}>${actionButton('Add another location', 'add-shoot-site', 'plus', 'secondary')}</div>
     </fieldset>`;
@@ -1026,7 +1006,7 @@ function addSiteRow(group) {
 
 function locationForm() {
   const office = state.office;
-  openDialog('Company location', 'Paste the Google Maps link for the office attendance boundary.', entryForm('office', `
+  openDialog('Company location', 'Enter the office coordinates or a Google Maps link.', entryForm('office', `
     <label class="full">Location name<input name="name" required maxlength="100" value="${e(office?.name || 'Concept Photography')}"></label>
     ${mapFields(office ?? {})}
   `, 'Save location'));
@@ -1413,7 +1393,7 @@ document.addEventListener('click', (event) => {
       break;
     case 'sign-out':
       mutate(button, async () => {
-        const subscription = apiOrigin ? await currentPushSubscription() : null;
+        const subscription = webPushEnabled ? await currentPushSubscription() : null;
         await request('logout', { pushEndpoint: subscription?.endpoint });
         if (subscription) await subscription.unsubscribe().catch(() => {});
         history.replaceState(null, '', location.pathname);
@@ -1746,8 +1726,8 @@ window.addEventListener('hashchange', () => {
   window.scrollTo(0, 0);
 });
 
-export function startWorkspace() {
-  loadSession();
+export function startWorkspace({ restore } = {}) {
+  if (restore) loadSession();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') restartLocationTracking();
   });

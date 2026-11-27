@@ -10,19 +10,16 @@ export function workspaceAddress(value) {
   return url;
 }
 
-export const workspaceSessionKey = (api) => api && `concept-photography-session:${api}`;
-
-export async function workspaceRequest(api, path, body, token) {
+export async function workspaceRequest(path, body) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
   let response;
   let payload;
   try {
-    response = await fetch(`${api || ''}/api/${path}`, {
+    response = await fetch(`/api/${path}`, {
       headers,
       ...(['login', 'session', 'state', 'attendance'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
-      ...(api ? { credentials: 'omit' } : {}),
+      credentials: 'same-origin',
       ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
     });
     payload = await response.json();

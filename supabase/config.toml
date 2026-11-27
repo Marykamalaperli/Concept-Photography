@@ -1,6 +1,0 @@
-project_id = "concept-photography"
-
-[functions.concept-api]
-# The shared workspace API validates its own opaque session tokens.
-verify_jwt = false
-entrypoint = "./functions/concept-api/index.js"
