@@ -86,6 +86,7 @@ test('private uploads enforce scope, protect completion evidence and restore ori
   assert.equal(download.headers.get('cache-control'), 'private, no-store');
   assert.match(download.headers.get('content-disposition'), /^attachment;.*Test%20evidence\.png/);
   assert.deepEqual(Buffer.from(await download.arrayBuffer()), fileBytes);
+  assert.equal((await json('task-action', staff, { taskId: 1, action: 'acknowledge' })).status, 200);
   assert.equal((await json('task-action', staff, { taskId: 1, action: 'start' })).status, 200);
   assert.equal((await json('task-action', staff, { taskId: 1, action: 'submit-completion', report: 'Review attached proof', fileId: file.id })).status, 200);
   assert.equal((await api(path, { method: 'DELETE', headers: { cookie: staff } })).status, 409);

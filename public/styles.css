@@ -147,6 +147,11 @@ button.profile-head{min-height:42px;text-align:left;padding:3px 7px;border-color
 .balance-list{display:grid;gap:9px;margin:0}
 .balance-list div{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-size:12px}
 .balance-list dd{margin:0;color:var(--ink);font-weight:750}
+.dashboard-queues div{align-items:baseline;gap:14px;padding:7px 0;border-bottom:1px solid var(--stroke)}
+.dashboard-queues div:last-child{border-bottom:0}
+.dashboard-queues dd{text-align:right;overflow-wrap:anywhere}
+.dashboard-queues .hr-title-button{text-align:right}
+.dashboard-names{margin:9px 0 0;color:var(--muted);font-size:12px}
 .net-panel{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:17px;background:#f2f6f0;border-color:#dce9df}
 .net-panel h2{font-size:16px}
 .net-panel p{color:var(--muted);font-size:12px;margin-top:4px}
@@ -389,3 +394,10 @@ table .tag{white-space:nowrap}
 .scope-grant{border-top:1px solid var(--stroke);padding-top:12px}
 .scope-grant h3{margin-bottom:10px}
 .audit-details{max-inline-size:25rem;min-inline-size:12rem;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem}
+.settings-register{margin:0;display:grid;gap:0}
+.settings-register>div{padding:16px 0;border-top:1px solid var(--stroke);display:grid;gap:6px}
+.settings-register>div:first-child{padding-top:3px;border-top:0}
+.settings-register dt{font-weight:700}
+.settings-register dd{margin:0;color:var(--muted);min-width:0}
+.settings-fields{padding:12px;margin:3px 0 0;min-width:0;border:1px solid var(--stroke)}
+.settings-fields legend{padding-inline:5px;font-weight:650}

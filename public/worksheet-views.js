@@ -1,8 +1,8 @@
 const labels = { lunch: 'Lunch', personal: 'Personal break', travel: 'Shoot travel' };
 const minute = 60_000;
 const minutes = (elapsed) => Number((elapsed / minute).toFixed(2));
-const numericFields = ['required', 'actual', 'remaining', 'overtime', 'office', 'shoot', 'travel', 'lunch', 'personal', 'away', 'late', 'early'];
-const fieldLabels = ['Required', 'Worked', 'Remaining', 'Overtime', 'Office', 'Shoot', 'Travel', 'Lunch', 'Personal', 'Away', 'Late', 'Early'];
+const numericFields = ['required', 'actual', 'remaining', 'overtime', 'office', 'shoot', 'travel', 'lunch', 'personal', 'away', 'late', 'early', 'verificationUncertain'];
+const fieldLabels = ['Required', 'Worked', 'Remaining', 'Overtime', 'Office', 'Shoot', 'Travel', 'Lunch', 'Personal', 'Away', 'Late', 'Early', 'GPS unverified'];
 
 export function createWorksheetViews(ui) {
   const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, applyAction, empty, table, today, day, time, duration, money } = ui;
@@ -67,9 +67,10 @@ export function createWorksheetViews(ui) {
           <div><dt>Revenue contribution</dt><dd>${money(report.revenueContribution)}</dd></div>
         </dl>
       </section>
-      ${reportTable('Daily hours', ['Date', 'In', 'Out', ...fieldLabels], report.days.map((row) => [
+      ${reportTable('Daily hours', ['Date', 'In', 'Out', ...fieldLabels, 'Policy date'], report.days.map((row) => [
         e(row.date), row.in == null ? '—' : time(row.in), row.out == null ? '—' : time(row.out),
         ...numericFields.map((key) => row[key] == null ? '—' : duration(row[key])),
+        row.policyEffectiveFrom === '1900-01-01' ? 'Baseline' : e(row.policyEffectiveFrom || '—'),
       ]), 'No working hours in this period.')}
       ${reportTable('Attendance intervals', ['Check in', 'Check out', 'Site', 'Entry', 'Exit', 'Last GPS verification'],
         report.attendance.map((row) => [timestamp(row.clock_in), timestamp(row.clock_out), e(row.site ? JSON.parse(row.site).name : '—'),

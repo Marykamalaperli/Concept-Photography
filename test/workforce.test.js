@@ -390,8 +390,11 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   await staff('task-action', { taskId: personal.id, action: 'block', reason: 'Awaiting client selection.' });
   await staff('task-action', { taskId: personal.id, action: 'start' }, 409);
   await staff('task-action', { taskId: personal.id, action: 'unblock' });
+  await staff('task-action', { taskId: personal.id, action: 'acknowledge' });
   await staff('task-action', { taskId: personal.id, action: 'start' });
-  await staff('task-action', { taskId: personal.id, action: 'complete' });
+  await staff('task-action', { taskId: personal.id, action: 'complete' }, 409);
+  await staff('task-action', { taskId: personal.id, action: 'submit-completion', report: 'Sample report checked' });
+  await admin('operations/completion', { taskId: personal.id, decision: 'approve' });
   await other('task-action', { taskId: personal.id, action: 'block', reason: 'Unassigned.' }, 403);
 
   const past = studioDay(dayStart(date) - dayLength);

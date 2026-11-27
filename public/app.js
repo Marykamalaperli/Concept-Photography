@@ -50,6 +50,7 @@ const adminNav = [
   ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
   ['audit-history', 'Audit history', 'list'],
+  ['settings', 'Settings', 'settings'],
 ];
 const employeeNav = [
   ['dashboard', 'Dashboard', 'layout-dashboard'],
@@ -79,7 +80,7 @@ const categories = {
 
 const initialState = () => ({
   hrSettings: { monthly_leave: 2, week_off: 0, required_minutes: 480, verification_grace_minutes: 5 },
-  projects: [], workPeriods: [], shiftReviews: [], footageChecks: [],
+  projects: [], workPeriods: [], activeWorkPeriods: [], shiftReviews: [], footageChecks: [], revenueSummary: null,
   plans: [], taskChanges: [], operationNotices: [], assignableStaff: [],
   holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [], attendanceGaps: [],
   office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
@@ -313,29 +314,78 @@ function mapLink(site, named = false) {
 function dashboard() {
   if (!manager()) return hrViews.dashboard();
   const now = Date.now();
-  const upcoming = state.tasks.filter((task) => task.shoot_status === 'booked' && !task.completed_at && task.start_at + task.estimate * 60_000 > now);
-  const { received, outstanding, expenses, net } = totals();
+  const date = today();
+  const month = date.slice(0, 7);
+  const openTasks = state.tasks.filter((task) => task.shoot_status === 'booked' && !task.completed_at);
+  const upcoming = openTasks.filter((task) => !task.is_unscheduled && task.start_at + task.estimate * 60_000 > now);
+  const { outstanding } = totals();
+  const received = state.payments.reduce((sum, item) => sum + (item.paid_on.startsWith(month) ? item.amount_paise : 0), 0);
+  const expenses = state.expenses.reduce((sum, item) => sum + (item.spent_on.startsWith(month) ? item.amount_paise : 0), 0);
+  const staff = state.employees.filter((person) => !person.is_admin && !person.deactivated);
+  const active = staff.flatMap((person) => {
+    const shift = shiftFor(person.id);
+    const period = state.activeWorkPeriods.find((item) => item.employee_id === person.id);
+    if (!shift && !period) return [];
+    const activeSite = shift?.site && JSON.parse(shift.site);
+    const gap = shift && state.attendanceGaps.some((item) => item.attendance_id === shift.id && item.resolved_at === null);
+    const status = period ? { travel: 'Travelling', lunch: 'At lunch', personal: 'On a break' }[period.kind] :
+      activeSite?.taskId ? 'On a shoot' : 'Working';
+    return [`<div><dt>${e(person.name)}</dt><dd>${status}${gap ? ' · GPS unverified' : ''}</dd></div>`];
+  });
+  const dueToday = openTasks.filter((task) => task.is_unscheduled || day(task.start_at) === date);
+  const assigned = new Set(dueToday.flatMap((task) => [task.employee_id, ...(task.crew ?? []).map((person) => person.employee_id)]));
+  const todayOff = new Date(date + 'T12:00:00+05:30').getUTCDay() === state.hrSettings.week_off ||
+    state.holidays.some((holiday) => holiday.day === date);
+  const unassigned = todayOff ? [] : staff.filter((person) => person.has_login && !assigned.has(person.id) &&
+    (!person.employment_start || person.employment_start <= date) && !state.hrRequests.some((item) =>
+      item.employee_id === person.id && item.kind === 'leave' && item.status === 'approved' &&
+      item.leave_type !== 'half' && item.day_from <= date && item.day_to >= date));
+  const queue = [
+    ['GPS verification interruptions', state.attendanceGaps.filter((item) => item.resolved_at === null).length, 'attendance'],
+    ['Shifts below required hours awaiting review', state.shiftReviews.filter((item) => item.status === 'pending' && item.recorded_ms < item.required_ms).length, 'reviews'],
+    ['Employees without work today', unassigned.length, 'schedule'],
+    ['Daily plans awaiting review', state.plans.filter((item) => item.status === 'submitted').length, 'reviews'],
+    ['Overdue tasks', openTasks.filter((item) => item.category !== 'Photo shoot' && item.work_state === 'ready' && !item.is_unscheduled &&
+      item.start_at + item.estimate * 60_000 < now).length, 'task-board'],
+    ['Emergency shoots', upcoming.filter((item) => item.emergency).length, 'shoot-calendar'],
+    ['Work, leave and time requests', pendingRequests().length, 'approvals'],
+    ['Next-day plans past deadline', state.missingNextPlans ?? 0, 'daily-plans'],
+    ['Pending footage checks', state.footageChecks.filter((item) => item.status !== 'approved').length, 'footage'],
+  ];
   return `
     ${heading('Admin Dashboard', 'Manage the studio’s people, shoots, and finances.', actionButton('Schedule shoot', 'new-shoot', 'plus'))}
     <p class="dashboard-date">${studioDate.format(now)}</p>
     ${metrics([
-      ['Employees', state.employees.filter((person) => !person.is_admin).length, 'users', 'peach'],
+      ['Employees on duty', active.length, 'users', 'peach'],
       ['Upcoming shoots', upcoming.filter((task) => task.category === 'Photo shoot').length, 'calendar-days', 'lavender'],
-      ['Pending approvals', pendingRequests().length, 'clipboard-check', 'sand'],
-      ['Payments received', money(received), 'wallet', 'sage'],
+      ['Plans awaiting review', queue[3][1], 'clipboard-check', 'sand'],
+      ['Receipts this month', money(received), 'wallet', 'sage'],
     ])}
     <div class="dashboard-grid">
+      <div class="stack">
+      <section class="panel">
+        <div class="panel-head"><div><h2>Needs attention</h2></div></div>
+        ${queue.some(([, count]) => count) ? `<dl class="balance-list dashboard-queues">${queue.filter(([, count]) => count)
+          .map(([label, count, route]) => `<div><dt>${viewLink(route, label)}</dt><dd>${count}</dd></div>`).join('')}</dl>` : empty('No operational issues to review.')}
+        ${unassigned.length ? `<p class="dashboard-names">${e(unassigned.slice(0, 6).map((person) => person.name).join(', '))}${unassigned.length > 6 ? ' and ' + (unassigned.length - 6) + ' more' : ''}</p>` : ''}
+      </section>
       <section class="panel">
         <div class="panel-head"><div><h2>Upcoming schedule</h2><p>Assigned work appears first.</p></div>${viewLink('schedule', 'View schedule')}</div>
-        ${state.attendanceGaps.some((gap) => gap.resolved_at === null) ? `<p class="location-watch">Location verification is interrupted for ${state.attendanceGaps.filter((gap) => gap.resolved_at === null).length} active shifts. ${viewLink('attendance', 'Review attendance')}</p>` : ''}
         ${upcoming.length ? upcoming.slice(0, 5).map(scheduleRow).join('') : empty('No upcoming shoots or tasks.')}
       </section>
-      <div class="stack">${officeCard()}
-        <section class="panel">
-          <div class="panel-head"><div><h2>Finance overview</h2><p>All transactions recorded to date</p></div>${viewLink('finances', 'View finances')}</div>
-          <dl class="balance-list"><div><dt>Pending payments</dt><dd>${money(outstanding)}</dd></div>
-          <div><dt>Expenses</dt><dd>${money(expenses)}</dd></div><div><dt>Cash profit</dt><dd>${money(net)}</dd></div></dl>
+      </div>
+      <div class="stack">
+        <section class="panel"><div class="panel-head"><h2>On duty</h2>${viewLink('attendance', 'Attendance')}</div>
+          ${active.length ? `<dl class="balance-list">${active.join('')}</dl>` : empty('No employees are checked in or travelling.')}
         </section>
+        <section class="panel">
+          <div class="panel-head"><div><h2>Finance overview</h2><p>${new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(now)}</p></div>${viewLink('finances', 'View finances')}</div>
+          <dl class="balance-list"><div><dt>Receipts this month</dt><dd>${money(received)}</dd></div>
+          <div><dt>Expenses this month</dt><dd>${money(expenses)}</dd></div>
+          <div><dt>Cash profit or loss this month</dt><dd>${money(received - expenses)}</dd></div>
+          <div><dt>Outstanding client payments</dt><dd>${money(outstanding)}</dd></div></dl>
+        </section>
+        ${officeCard()}
       </div>
     </div>`;
 }
@@ -515,7 +565,7 @@ dialog.addEventListener('close', () => {
 
 function workControls(task) {
   if (!assignedTo(task, actorId) || task.shoot_status !== 'booked' || task.work_state !== 'ready' || task.completed_at) return '';
-  if (task.daily_plan_id && !task.acknowledged_at) {
+  if (task.category !== 'Photo shoot' && !task.acknowledged_at) {
     return `<button type="button" class="btn primary" data-action="task-timer" data-value="acknowledge" data-id="${task.id}">Acknowledge task</button>`;
   }
   if (task.blocked_reason) {
@@ -918,8 +968,27 @@ function loadHrViews() {
   return hrViewsPromise;
 }
 
+function settingsPage() {
+  const settings = state.hrSettings;
+  return `${heading('Settings', 'Manage studio policies, locations and the tools used to run the office.')}
+    <dl class="settings-register panel">
+      <div><dt>Office locations</dt><dd>${state.office ? e(state.office.name) : 'Office coordinates pending'}</dd>
+      <dd>${actionButton('Edit office locations', 'office-location', 'map-pin', 'secondary')}</dd></div>
+      <div><dt>Working hours, GPS and approvals</dt><dd>${settings.required_minutes} minutes per day · ${settings.boundary_samples} GPS confirmations</dd>
+      <dd>${actionButton('Edit policy', 'hr-settings', 'settings', 'secondary')} ${actionButton('Policy history', 'policy-history', 'history', 'secondary')}</dd></div>
+      <div><dt>Holidays and leave</dt><dd>Manage the studio holiday calendar and leave allowance.</dd>
+        <dd>${viewLink('leave', 'Open leave and holidays')}</dd></div>
+      <div><dt>Roles and notifications</dt><dd>Grant capabilities by role. Staff choose mobile updates per device.</dd>
+        <dd>${actionButton('Role permissions', 'role-permissions', 'shield', 'secondary')} ${viewLink('notifications', 'Device notifications')}</dd></div>
+      <div><dt>Footage storage</dt><dd>Assign the employee responsible for verifying shoot storage.</dd>
+        <dd>${viewLink('footage', 'Open footage storage')}</dd></div>
+      <div><dt>Retention and backup</dt><dd>Retention periods, backup destinations and HTTPS are configured on the office server.</dd>
+        <dd>${viewLink('audit-history', 'Open audit history')}</dd></div>
+    </dl>`;
+}
+
 const pages = {
-  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, reviews: reviewViews.page, 'audit-history': auditViews.page, 'scoped-work': scopedViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
+  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, reviews: reviewViews.page, settings: settingsPage, 'audit-history': auditViews.page, 'scoped-work': scopedViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
   'task-board': () => hrViews.taskBoard(), 'work-log': () => hrViews.workLog(), leave: () => hrViews.leave(), payroll: () => hrViews.payroll(),
   announcements: () => hrViews.announcements(), clients: clientsPage, approvals: approvalsPage,
   work: availableWorkPage, finances: financesPage, attendance: () => hrViews.attendance(), notifications: notificationsPage,
@@ -1640,7 +1709,7 @@ async function processLocation() {
     if (shift?.boundaryPending) {
       watch.boundaryTimer = setTimeout(() => {
         if (watcher === watch && document.visibilityState === 'visible') sampleWatcher(watch);
-      }, boundarySampleDelay + 150);
+      }, (state.hrSettings.boundary_delay_ms ?? boundarySampleDelay) + 150);
       updateTracking();
       return;
     }
@@ -1693,7 +1762,7 @@ const savedMessages = {
   projects: 'Project saved.', 'projects/resource': 'Project resource saved.',
   'revenue/save': 'Allocations saved.',
   scopes: 'Access saved.', roles: 'Role permissions saved.', 'roles/assign': 'Access role saved.', 'hr/review': 'Request reviewed.',
-  'footage/manager': 'Storage manager updated.', 'footage/submit': 'Verification submitted.', 'footage/review': 'Verification reviewed.',
+  'footage/historical': 'Storage verifications saved.', 'footage/manager': 'Storage manager updated.', 'footage/submit': 'Verification submitted.', 'footage/review': 'Verification reviewed.',
   attendance: 'Shift ended.', 'attendance/period': 'Timer started.',
   'attendance/review-shift': 'Shift review saved.', 'worksheet/remark': 'Remark saved.',
   'operations/plan': 'Draft saved.', 'operations/review-plan': 'Plan reviewed.',
@@ -1881,6 +1950,17 @@ document.addEventListener('click', (event) => {
       if (offlineDeparture?.encrypted) offlineStorage?.remove(offlineDeparture.encrypted);
       offlineDeparture = undefined;
       render();
+      break;
+    case 'policy-history':
+      mutate(button, async () => {
+        const { history } = await request('settings/history');
+        openDialog('Work policy history', 'Worksheets use the policy effective on the day worked.', table('Policy history',
+          ['Effective date (IST)', 'Daily target', 'Plan deadline', 'Task reminder'], history.map((row) => {
+            const settings = JSON.parse(row.settings);
+            return [row.changed_at ? e(row.effective_from) : 'Baseline', settings.required_minutes + ' min', e(settings.plan_deadline),
+              settings.task_reminder_minutes ? settings.task_reminder_minutes + ' min' : 'Off'];
+          })));
+      });
       break;
     case 'operations-audit':
       mutate(button, async () => {
@@ -2267,11 +2347,17 @@ document.addEventListener('submit', (event) => {
     data.allocations = fields.getAll('allocationValue').flatMap((value, index) =>
       value ? [{ employeeId: staff[index], type: types[index], value }] : []);
   }
+  if (kind === 'footage/historical') data.ids = fields.getAll('shoot');
   if (kind === 'footage/submit') {
     data.transferred = fields.has('transferred');
     data.stored = fields.has('stored');
   }
   if (kind === 'employees/access') data.active = data.active === 'true';
+  if (kind === 'hr/settings') {
+    for (const key of ['personalBreakPaid','travelPaid','attachmentRequired']) {
+      if (Object.hasOwn(data, key)) data[key] = data[key] === 'true';
+    }
+  }
   if (kind === 'operations/plan') {
     const columns = ['entryTitle', 'entryFrom', 'entryTo', 'entryCategory', 'entryLocation'].map((key) => fields.getAll(key));
     data.entries = columns[0].map((title, index) => ({

@@ -148,7 +148,8 @@ export function createOperationsViews(ui) {
     'submit-completion': (_button, _value, id) => openDialog('Submit work for review', e(taskById(id).title), entryForm('task-action', `
       <input type="hidden" name="taskId" value="${id}"><input type="hidden" name="action" value="submit-completion">
       <label class="full">Completion report or evidence reference<textarea name="report" maxlength="3000" rows="4" required></textarea></label>
-      <label class="full">Attach evidence (optional)<input name="evidence" type="file" accept="image/png,image/jpeg,application/pdf"></label>
+      <label class="full">Attach evidence${taskById(id)?.evidence_required ? '' : ' (optional)'}<input name="evidence" type="file"
+        accept="image/png,image/jpeg,application/pdf" ${taskById(id)?.evidence_required && !taskById(id)?.completion_file_id ? 'required' : ''}></label>
     `, 'Submit work')),
     'add-plan-entry': (button) => {
       const host = button.form.querySelector('.plan-entries');

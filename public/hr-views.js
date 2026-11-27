@@ -339,6 +339,49 @@ export function createHrViews(ui) {
       }).join('')}</ul>` : ''}</div>`;
   }
 
+  function todayActions(tasks, now) {
+    const data = state();
+    const date = today();
+    const active = data.sessions.find((session) => session.end_at === null);
+    const activeWork = active && data.tasks.find((task) => task.id === active.task_id);
+    const next = tasks.find((task) => task.id !== activeWork?.id && task.work_state === 'ready' &&
+      !task.is_unscheduled && task.start_at + task.estimate * 60_000 > now);
+    const approved = data.plans.find((plan) => plan.work_day === date && plan.status === 'approved');
+    const planned = approved ? data.tasks.filter((task) => task.daily_plan_id === approved.id).length : 0;
+    const unscheduled = tasks.filter((task) => task.is_unscheduled).length;
+    const requests = data.hrRequests.filter((entry) => entry.status === 'pending').length +
+      data.taskChanges.filter((entry) => entry.status === 'pending').length +
+      data.requests.filter((entry) => entry.status === 'pending').length +
+      data.plans.filter((entry) => entry.status === 'submitted').length +
+      data.shiftReviews.filter((entry) => entry.status === 'pending').length +
+      data.tasks.filter((task) => task.work_state === 'review').length;
+    const nextPlan = data.plans.filter((plan) => plan.work_day > date && !['superseded', 'rejected'].includes(plan.status))
+      .sort((first, second) => first.work_day.localeCompare(second.work_day) || second.revision - first.revision)[0];
+    const describe = (task, fallback) => task ?
+      `<button class="hr-title-button" type="button" data-action="details" data-id="${task.id}">${e(task.title)}</button>` : fallback;
+    return `<dl class="balance-list dashboard-queues">
+      <div><dt>Active task</dt><dd>${describe(activeWork, 'No timer running')}</dd></div>
+      <div><dt>Next scheduled task</dt><dd>${describe(next, 'No upcoming work')}</dd></div>
+      <div><dt>Approved plan today</dt><dd>${approved ? planned + (planned === 1 ? ' task' : ' tasks') : 'No approved plan'}</dd></div>
+      <div><dt>Unscheduled assignments</dt><dd>${unscheduled}</dd></div>
+      <div><dt>Items awaiting approval</dt><dd>${requests}</dd></div>
+      <div><dt>Next-day plan</dt><dd>${nextPlan ? dayLabel(nextPlan.work_day) + ' · ' + e(nextPlan.status) :
+        'Submit by ' + e(data.hrSettings.plan_deadline ?? '17:30') + ' IST'}</dd></div>
+    </dl>`;
+  }
+
+  function recordsSummary() {
+    const data = state();
+    const footage = data.footageChecks.filter((item) => ['assigned', 'returned', 'incident'].includes(item.status));
+    const unread = data.operationNotices.filter((notice) => notice.read_at === null).length;
+    return `<dl class="balance-list dashboard-queues">
+      <div><dt>${viewLink('worksheet', 'Worksheet and work performance')}</dt><dd>${elapsedClock(hoursToday().actual)} today</dd></div>
+      <div><dt>${viewLink('revenue', 'Revenue contribution this month')}</dt><dd>${money(data.revenueSummary?.total ?? 0)}</dd></div>
+      ${footage.length ? `<div><dt>${viewLink('footage', 'Footage to verify')}</dt><dd>${footage.length}</dd></div>` : ''}
+      <div><dt>${viewLink('notifications', 'Notifications')}</dt><dd>${unread} unread updates</dd></div>
+    </dl>`;
+  }
+
   function dashboard() {
     const now = Date.now();
     const upcoming = state().tasks.filter((task) => task.category === 'Photo shoot' && bookingState(task) === 'booked' &&
@@ -352,6 +395,8 @@ export function createHrViews(ui) {
         ${panel('Holidays', availableHolidays.length ? holidaysList(availableHolidays) : empty('No upcoming holidays.'), viewLink('leave', 'Holiday list'))}
         ${panel('Leave', leaveBalance(), button('Apply', 'leave-request', 'calendar-plus'))}
         ${attendanceSummary()}
+      ${panel('Work priorities', todayActions(tasks, now), viewLink('daily-plans', 'Daily plans'), 'hr-span')}
+      ${panel('My records', recordsSummary(), button('Private notepad', 'profile', 'clipboard-list'), 'hr-span')}
         ${panel('Upcoming shoots', shootRows(upcoming.slice(0, 4)), viewLink('shoot-calendar', 'Calendar'), 'hr-span')}
         ${panel('My tasks', tasks.length ? tasks.slice(0, 4).map((task) => `<article class="hr-entry">
           <div><button type="button" class="hr-title-button" data-action="details" data-id="${task.id}">${e(task.title)}</button>
@@ -379,22 +424,43 @@ export function createHrViews(ui) {
   }
 
   function settingsForm() {
-    const { work_start, work_end, week_off, monthly_leave, required_minutes, verification_grace_minutes,
-      lunch_start, lunch_minutes, personal_break_minutes, office_radius_m, shoot_radius_m, max_accuracy_m } = state().hrSettings;
-    openDialog('Attendance & leave settings', 'Office hours are shown to staff. The weekly day off and leave allowance apply to attendance reports.',
+    const values = state().hrSettings;
+    const number = (label, name, value, min, max) => field(label,
+      `<input name="${name}" type="number" min="${min}" max="${max}" required value="${value}">`);
+    const clock = (label, name, value, required = false) => field(label,
+      `<input name="${name}" type="time" ${required ? 'required' : ''} value="${e(value)}">`);
+    const switchField = (label, name, value) => field(label, `<select name="${name}">
+      <option value="true"${value ? ' selected' : ''}>Enabled</option>
+      <option value="false"${!value ? ' selected' : ''}>Disabled</option></select>`);
+    const group = (title, fields) => `<fieldset class="full form-grid settings-fields"><legend>${title}</legend>${fields}</fieldset>`;
+    const tomorrow = day(dayStart(today()) + dayLength);
+    openDialog('Business policy', 'Work rules apply from the selected date. GPS changes and the new-task evidence rule apply when saved.',
       entryForm('hr/settings', `
-        ${field('Office opens (IST)', `<input name="workStart" type="time" value="${e(work_start)}">`)}
-        ${field('Office closes (IST)', `<input name="workEnd" type="time" value="${e(work_end)}">`)}
-        ${field('Weekly day off', `<select name="weekOff">${options(weekdays.map((label, index) => [index, label]), week_off)}</select>`)}
-        ${field('Casual days earned per month', `<input type="number" name="monthlyLeave" min="0" max="31" required value="${monthly_leave}">`)}
-        ${field('Required working minutes per day', `<input type="number" name="requiredMinutes" min="0" max="1440" required value="${required_minutes}">`)}
-        ${field('GPS grace period (minutes)', `<input type="number" name="verificationGraceMinutes" min="2" max="60" required value="${verification_grace_minutes}">`)}
-        ${field('Office radius (metres)', `<input name="officeRadius" type="number" min="50" max="100" required value="${office_radius_m}">`)}
-        ${field('Shoot radius (metres)', `<input name="shootRadius" type="number" min="50" max="100" required value="${shoot_radius_m}">`)}
-        ${field('Maximum GPS accuracy (metres)', `<input name="maxAccuracy" type="number" min="5" max="100" required value="${max_accuracy_m}">`)}
-        ${field('Scheduled lunch starts (IST)', `<input name="lunchStart" type="time" value="${e(lunch_start)}">`)}
-        ${field('Lunch target in minutes', `<input name="lunchMinutes" type="number" min="5" max="180" required value="${lunch_minutes}">`)}
-        ${field('Personal break warning in minutes', `<input name="personalBreakMinutes" type="number" min="5" max="180" required value="${personal_break_minutes}">`)}`, 'Save settings'));
+        ${field('Work policy effective from (IST)', `<input name="effectiveFrom" type="date" value="${tomorrow}" min="${today()}" required>`, true)}
+        ${group('Working hours and leave',
+          clock('Office opens (IST)', 'workStart', values.work_start) + clock('Office closes (IST)', 'workEnd', values.work_end) +
+          field('Weekly day off', `<select name="weekOff">${options(weekdays.map((label, index) => [index, label]), values.week_off)}</select>`) +
+          number('Casual leave days per month', 'monthlyLeave', values.monthly_leave, 0, 31) +
+          number('Required minutes per day', 'requiredMinutes', values.required_minutes, 0, 1440) +
+          number('Minutes before overtime counts', 'overtimeGrace', values.overtime_grace_minutes, 0, 120))}
+        ${group('Breaks and travel',
+          clock('Lunch starts (IST)', 'lunchStart', values.lunch_start) +
+          number('Lunch target, minutes', 'lunchMinutes', values.lunch_minutes, 5, 180) +
+          number('Personal break warning, minutes', 'personalBreakMinutes', values.personal_break_minutes, 5, 180) +
+          switchField('Count personal breaks during a shift', 'personalBreakPaid', values.personal_break_paid) +
+          switchField('Count official travel outside shifts', 'travelPaid', values.travel_paid))}
+        ${group('GPS verification',
+          number('Office radius, metres', 'officeRadius', values.office_radius_m, 50, 100) +
+          number('Shoot radius, metres', 'shootRadius', values.shoot_radius_m, 50, 100) +
+          number('Maximum GPS accuracy, metres', 'maxAccuracy', values.max_accuracy_m, 5, 100) +
+          number('Interruption grace, minutes', 'verificationGraceMinutes', values.verification_grace_minutes, 2, 60) +
+          number('Boundary confirmations', 'boundarySamples', values.boundary_samples, 2, 4) +
+          number('Between confirmations, milliseconds', 'boundaryDelay', values.boundary_delay_ms, 1000, 5000))}
+        ${group('Scheduling and review',
+          clock('Daily plan deadline (IST)', 'planDeadline', values.plan_deadline, true) +
+          number('Task reminder before finish, minutes', 'reminderMinutes', values.task_reminder_minutes, 0, 120) +
+          switchField('Require attachments for new tasks', 'attachmentRequired', values.attachment_required))}
+        ${field('Reason for change', '<input name="reason" maxlength="350">', true)}`, 'Save policy'));
   }
 
   function holidayForm(date) {

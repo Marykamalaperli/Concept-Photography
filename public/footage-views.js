@@ -43,6 +43,14 @@ export function createFootageViews(ui) {
       </select></label>`, 'Save assignment'));
   }
 
+  function historical() {
+    const shots = state().tasks.filter((row) => row.category === 'Photo shoot' && row.completed_at && !row.footage_status);
+    openDialog('Verify past shoots', 'Select completed shoots that still need storage verification.', shots.length ? entryForm('footage/historical', `
+      <fieldset class="full settings-fields"><legend>Completed shoots</legend>
+        ${shots.map((shot) => `<label class="check-row"><input type="checkbox" name="shoot" value="${shot.id}"> ${e(shot.title)} · ${day(shot.start_at)}</label>`).join('')}
+      </fieldset>`, 'Create verifications') : empty('All completed shoots already have a verification.'));
+  }
+
   function record(row) {
     return `<article class="panel operation-row">
       <header class="panel-head"><div><h2>${e(row.shoot_title)}</h2><p>${day(row.shoot_at)} · ${time(row.shoot_at)} IST · ${e(row.shoot_location)}</p></div>
@@ -67,7 +75,8 @@ export function createFootageViews(ui) {
   function page() {
     const rows = state().footageChecks;
     return `${heading('Footage storage', 'Record where footage was transferred and verify its backup.',
-      manager() ? actionButton('Assign storage manager', 'footage-manager', 'user-round', 'secondary') : '')}
+      manager() ? `<div class="card-actions">${actionButton('Assign storage manager', 'footage-manager', 'user-round', 'secondary')}
+        ${actionButton('Verify past shoots', 'footage-historical', 'archive', 'secondary')}</div>` : '')}
       <div class="operation-stack">${rows.length ? rows.map(record).join('') : `<section class="panel">${empty('No footage verifications assigned.')}</section>`}</div>`;
   }
 
@@ -76,6 +85,7 @@ export function createFootageViews(ui) {
     label: (status) => statuses[status],
     actions: {
       'footage-manager': managerForm,
+      'footage-historical': historical,
       'footage-verify': (_button, _value, id) => form(checkById(id)),
       'footage-approve': (_button, _value, id) => reviewForm(checkById(id), 'approved'),
       'footage-return': (_button, _value, id) => reviewForm(checkById(id), 'returned'),

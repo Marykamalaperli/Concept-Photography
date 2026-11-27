@@ -39,7 +39,7 @@ async function fixture(t) {
     await call('login', { email: name + '@example.invalid', password });
     return call;
   }
-  return { db, manager: await signIn('owner'), staff: await signIn('editor'), other: await signIn('photographer') };
+  return { db, signIn, manager: await signIn('owner'), staff: await signIn('editor'), other: await signIn('photographer') };
 }
 
 function planned(title, from = '09:00', to = '10:00') {
@@ -85,9 +85,39 @@ test('submitted plans are role-scoped and locked, with revisions and completion 
   await assert.rejects(staff('operations/audit'), { status: 403 });
 });
 
+test('dated work policies preserve prior worksheets and configured evidence is enforced for ad-hoc tasks', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-27T14:00:00+05:30') });
+  const { db, signIn } = await fixture(t);
+  let manager = await signIn('owner');
+  let staff = await signIn('editor');
+  const report = (date) => staff('worksheet', { date, period: 'day' });
+  const row = ({ days }) => days[0];
+  assert.equal(row(await report('2026-11-27')).required, 480 * minute);
+  await manager('hr/settings', { weekOff: 0, monthlyLeave: 2, effectiveFrom: '2026-11-28', requiredMinutes: 360,
+    personalBreakPaid: true, travelPaid: false, attachmentRequired: true });
+  assert.equal(row(await report('2026-11-27')).required, 480 * minute);
+  const task = await manager('tasks', { employeeId: 2, title: 'Proof of export', category: 'Editing', location: 'Studio', unscheduled: true, estimate: 30 });
+  await staff('task-action', { taskId: task.id, action: 'acknowledge' });
+  await staff('task-action', { taskId: task.id, action: 'start' });
+  await assert.rejects(staff('task-action', { taskId: task.id, action: 'submit-completion', report: 'Export checked.' }), { status: 400 });
+  const fileId = 'bbbbbbbb-aaaa-cccc-dddd-eeeeeeeeeeee';
+  await db.run(`INSERT INTO private_files(id, kind, record_id, uploaded_by, name, media_type, byte_length, sha256, created_at)
+    VALUES (?, 'task', ?, 2, 'proof.png', 'image/png', 64, ?, ?)`, fileId, task.id, '0'.repeat(64), Date.now());
+  await staff('task-action', { taskId: task.id, action: 'submit-completion', report: 'Export checked.', fileId });
+  assert.equal((await db.get('SELECT work_state FROM tasks WHERE id = ?', task.id)).work_state, 'review');
+  t.mock.timers.setTime(Date.parse('2026-11-28T14:00:00+05:30'));
+  manager = await signIn('owner');
+  staff = await signIn('editor');
+  assert.equal(row(await report('2026-11-27')).required, 480 * minute);
+  assert.equal(row(await report('2026-11-28')).required, 360 * minute);
+  await assert.rejects(manager('hr/settings', { weekOff: 0, monthlyLeave: 0, effectiveFrom: '2026-11-27' }), { status: 400 });
+  await assert.rejects(staff('settings/history'), { status: 403 });
+});
+
 test('an emergency shoot pauses only affected work and preserves timings through an approved reschedule', async (t) => {
   const { db, manager, staff, other } = await fixture(t);
   const first = await manager('tasks', { employeeId: 2, title: 'Colour grade', category: 'Editing', location: 'Studio', startAt: iso('09:00'), estimate: 60 });
+  await staff('task-action', { taskId: first.id, action: 'acknowledge' });
   await staff('task-action', { taskId: first.id, action: 'start' });
   const input = {
     employeeId: 2, title: 'Urgent pickup shoot', category: 'Photo shoot', location: 'Studio annex',
@@ -252,6 +282,19 @@ test('completed shoots queue one private footage verification and require storag
   await manager('footage/manager', { employeeId: 3 });
   assert.equal((await staff('state')).footageChecks[0].status, 'approved');
   assert.equal((await other('state')).footageChecks.length, 0);
+
+  const old = await manager('tasks', {
+    employeeId: 3, title: 'Historical shoot', category: 'Photo shoot', location: 'Studio',
+    startAt: iso('10:00'), endAt: iso('11:00'), clientName: 'Synthetic client', clientPhone: '9000000000',
+    latitude: 17.38, longitude: 78.48, income: '200',
+  });
+  await db.run('UPDATE tasks SET completed_at = ? WHERE id = ?', Date.now(), old.id);
+  await assert.rejects(staff('footage/historical', { ids: [old.id] }), { status: 403 });
+  await assert.rejects(manager('footage/historical', { ids: [old.id, 999999] }), { status: 409 });
+  assert.equal(await db.get('SELECT id FROM footage_checks WHERE shoot_id = ?', old.id), undefined);
+  await manager('footage/historical', { ids: [old.id] });
+  await manager('footage/historical', { ids: [old.id] });
+  assert.equal((await db.get('SELECT COUNT(*) AS total FROM footage_checks WHERE shoot_id = ?', old.id)).total, 1);
 });
 
 test('completed shoot allocations use integer paise and never change company booked or cash totals', async (t) => {
@@ -396,6 +439,7 @@ test('unscheduled assignments remain on the board and acquire a date through an 
   await refreshStudioNotices(db, task.start_at + 2 * minute);
   assert.equal((await db.get("SELECT COUNT(*) AS count FROM operation_notices WHERE task_id = ? AND title = 'Task finishes soon'", task.id)).count, 0);
   assert.equal((await db.get('SELECT COUNT(*) AS count FROM reminders WHERE task_id = ?', task.id)).count, 0);
+  await staff('task-action', { taskId: task.id, action: 'acknowledge' });
   await staff('task-action', { taskId: task.id, action: 'start' });
   const request = await staff('operations/task-change', {
     taskId: task.id, kind: 'reschedule', start: iso('10:00'), reason: 'Schedule the handoff',
