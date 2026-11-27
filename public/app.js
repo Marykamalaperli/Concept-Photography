@@ -170,6 +170,10 @@ function avatar(person) {
     ${person.active_photo_id ? `<img class="avatar-photo" src="/api/avatars/${person.id}/${e(person.active_photo_id)}" alt="" width="38" height="38">` : ''}</span>`;
 }
 
+document.addEventListener('error', ({ target }) => {
+  if (target instanceof HTMLImageElement && target.classList.contains('avatar-photo')) target.hidden = true;
+}, true);
+
 function duration(milliseconds, precise = false) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   const minutes = Math.floor(seconds / 60);

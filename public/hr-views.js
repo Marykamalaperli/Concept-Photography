@@ -376,7 +376,8 @@ export function createHrViews(ui) {
     const unread = data.operationNotices.filter((notice) => notice.read_at === null).length;
     return `<dl class="balance-list dashboard-queues">
       <div><dt>${viewLink('worksheet', 'Worksheet and work performance')}</dt><dd>${elapsedClock(hoursToday().actual)} today</dd></div>
-      <div><dt>${viewLink('revenue', 'Revenue contribution this month')}</dt><dd>${money(data.revenueSummary?.total ?? 0)}</dd></div>
+      <div><dt>${viewLink('revenue', 'Revenue contribution this month')}</dt><dd>${money(data.revenueSummary?.total ?? 0)}
+        ${data.revenueSummary?.shoots ? `<br><small>${data.revenueSummary.shoots} completed ${data.revenueSummary.shoots === 1 ? 'shoot' : 'shoots'}</small>` : ''}</dd></div>
       ${footage.length ? `<div><dt>${viewLink('footage', 'Footage to verify')}</dt><dd>${footage.length}</dd></div>` : ''}
       <div><dt>${viewLink('notifications', 'Notifications')}</dt><dd>${unread} unread updates</dd></div>
     </dl>`;
@@ -392,16 +393,16 @@ export function createHrViews(ui) {
     return `${heading('My Dashboard', e(actor().name) + ' · ' + e(actor().role))}
       <div class="hr-dashboard">
         ${clockCard()}
-        ${panel('Holidays', availableHolidays.length ? holidaysList(availableHolidays) : empty('No upcoming holidays.'), viewLink('leave', 'Holiday list'))}
-        ${panel('Leave', leaveBalance(), button('Apply', 'leave-request', 'calendar-plus'))}
-        ${attendanceSummary()}
       ${panel('Work priorities', todayActions(tasks, now), viewLink('daily-plans', 'Daily plans'), 'hr-span')}
-      ${panel('My records', recordsSummary(), button('Private notepad', 'profile', 'clipboard-list'), 'hr-span')}
+        ${attendanceSummary()}
         ${panel('Upcoming shoots', shootRows(upcoming.slice(0, 4)), viewLink('shoot-calendar', 'Calendar'), 'hr-span')}
         ${panel('My tasks', tasks.length ? tasks.slice(0, 4).map((task) => `<article class="hr-entry">
           <div><button type="button" class="hr-title-button" data-action="details" data-id="${task.id}">${e(task.title)}</button>
             <p class="hr-muted">${dayLabel(day(task.start_at))} · ${time(task.start_at)}</p></div>${task.priority ? tag('Priority', 'peach') : ''}</article>`).join('') :
           empty('No open tasks.'), viewLink('task-board', 'All tasks'), 'hr-span')}
+        ${panel('Holidays', availableHolidays.length ? holidaysList(availableHolidays) : empty('No upcoming holidays.'), viewLink('leave', 'Holiday list'))}
+        ${panel('Leave', leaveBalance(), button('Apply', 'leave-request', 'calendar-plus'))}
+        ${panel('My records', recordsSummary(), button('Private notepad', 'profile', 'clipboard-list'), 'hr-span')}
         ${panel('Today’s work', workRows(actor().id, today(), 4), viewLink('work-log', 'Open log'), 'hr-span')}
         ${panel('Payroll', paySummary(payslips), viewLink('payroll', 'Payslips'), 'hr-span')}
         ${panel('Announcements', announcementRows(state().announcements.slice(0, 2)), viewLink('announcements', 'All updates'), 'hr-full')}

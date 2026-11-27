@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { openStore } from '../../store.js';
+import { writeBaselinePolicy } from '../../lib/business-settings.js';
 
 const tables = [
   'employees', 'office', 'clients', 'tasks', 'task_sessions', 'attendance', 'reminders',
@@ -70,6 +71,7 @@ function importSnapshot(db, snapshot) {
       if (count !== rows.length) throw new Error(`Record count mismatch in ${table}.`);
       counts[table] = count;
     }
+    writeBaselinePolicy(db);
     if (db.prepare('PRAGMA foreign_key_check').get()) throw new Error('The export contains broken record relationships.');
     const financialTotals = {};
     for (const [table, column, label] of balances) {

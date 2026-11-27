@@ -7,9 +7,10 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { hashPassword } from '../lib/accounts.js';
-import { attachmentPath, fileStoragePath } from '../lib/local-files.js';
+import { attachmentPath, createLocalFiles, fileStoragePath } from '../lib/local-files.js';
 import { createBackup, restoreBackup } from '../scripts/database-backup.js';
 import { openStore } from '../store.js';
+import { sqliteAdapter } from '../sqlite-adapter.js';
 
 const password = 'Synthetic local file passphrase';
 const fileBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/njcAAAAASUVORK5CYII=', 'base64');
@@ -150,6 +151,20 @@ test('private uploads enforce scope, protect completion evidence and restore ori
   assert.equal((await api(avatarPath, { headers: { cookie: staff } })).status, 404);
   assert.equal((await (await api('session', { headers: { cookie: staff } })).json()).actor.active_photo_id, null);
   await assert.rejects(readFile(attachmentPath(fileStoragePath(restored), loose.id)), { code: 'ENOENT' });
+  const retentionDb = new DatabaseSync(source);
+  try {
+    const now = Date.now();
+    retentionDb.exec('UPDATE hr_settings SET removed_file_days = 7 WHERE id = 1');
+    retentionDb.prepare('UPDATE private_files SET removed_at = ? WHERE id = ?').run(now - 8 * 86_400_000, loose.id);
+    const files = createLocalFiles(sqliteAdapter(retentionDb), { directory });
+    await files.prune(now);
+    assert.equal(retentionDb.prepare('SELECT purged_at FROM private_files WHERE id = ?').get(loose.id).purged_at, now);
+    await assert.rejects(readFile(attachmentPath(directory, loose.id)), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(attachmentPath(directory, avatar.id)), fileBytes);
+    assert.deepEqual(await readFile(attachmentPath(directory, file.id)), fileBytes);
+  } finally {
+    retentionDb.close();
+  }
   await writeFile(attachmentPath(fileStoragePath(backup), file.id), Buffer.alloc(fileBytes.length));
   await assert.rejects(restoreBackup(backup, join(folder, 'invalid.sqlite')), /checksum mismatch/);
 });

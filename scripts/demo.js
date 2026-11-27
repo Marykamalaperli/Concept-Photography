@@ -47,7 +47,7 @@ export async function seedDemo(database, { scale = 1, now = Date.now() } = {}) {
       const sales = ['Product catalogue', 'Studio portraits', 'Editorial collection', 'Retail launch', 'Food styling', 'Location portraits'];
       for (let i = 1; i <= scale * 24; i++) {
         const label = sales[(i - 1) % sales.length] + (i > sales.length ? ' · ' + i : '');
-        const time = midnight + (i % 5 === 0 ? 5 : -(i % 70)) * dayLength + 10 * 3_600_000;
+        const time = midnight + (i % 5 === 0 ? 1 + (i / 5) % 25 : -(i % 70)) * dayLength + (8 + i % 10) * 3_600_000;
         const completed = time + 3 * 3_600_000 < now ? time + 3 * 3_600_000 : null;
         addClient.run(i, 'Rehearsal client ' + i, String(9000000000 + i), 'client-' + i + '@studio.example.invalid');
         addProject.run(i, i, label, Math.min(time, now));
@@ -79,6 +79,12 @@ export async function seedDemo(database, { scale = 1, now = Date.now() } = {}) {
       addAttendance.run(now - 45 * 60_000, null, site, site, 'manual', now, null);
       db.prepare("INSERT INTO hr_requests(employee_id,kind,day_from,day_to,leave_type,reason,requested_at) VALUES(2,'leave',?,?,'casual','Rehearsal leave request',?)")
         .run(studioDay(now + dayLength * 2), studioDay(now + dayLength * 2), now);
+      const planStart = midnight + dayLength + 11 * 3_600_000;
+      const planned = [{ title: 'Review the portrait sequence', from: '11:00', to: '12:00', category: 'Editing',
+        location: 'Rehearsal studio', start: planStart, end: planStart + 3_600_000 }];
+      db.prepare(`INSERT INTO daily_plans (employee_id,work_day,revision,status,entries,created_at,submitted_at)
+        VALUES(2,?,1,'submitted',?,?,?)`).run(studioDay(planStart), JSON.stringify(planned), now, now);
+      db.prepare("INSERT INTO holidays(day,name) VALUES(?,'Rehearsal holiday')").run(studioDay(now + 10 * dayLength));
       db.prepare("INSERT INTO announcements(title,message,published_at) VALUES('Rehearsal schedule','Use these synthetic records to review studio operations.',?)").run(now);
       db.exec('COMMIT');
     } catch (error) {

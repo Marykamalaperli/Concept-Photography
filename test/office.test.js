@@ -7,6 +7,7 @@ import test from 'node:test';
 import { hashPassword, passwordMatches } from '../lib/accounts.js';
 import { createMobilePush } from '../lib/mobile-push.js';
 import { minimizeHistoricalDetails } from '../lib/retention.js';
+import { settingsAt } from '../lib/business-settings.js';
 import { endAttendanceGap, refreshAttendanceGaps } from '../lib/attendance-gaps.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
@@ -55,6 +56,7 @@ test('legacy dry run validates relationships and financial totals before creatin
     assert.equal(db.prepare('SELECT COUNT(*) AS total FROM auth_sessions').get().total, 0);
     assert.equal(db.prepare('SELECT client_id FROM tasks WHERE id = 40').get().client_id, 11);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    assert.equal((await settingsAt(sqliteAdapter(db), '2026-11-27')).monthly_leave, 3);
   } finally {
     db.close();
   }
