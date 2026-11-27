@@ -203,3 +203,88 @@ test('additional office pins and GPS accuracy settings authorize only matching r
   assert.equal(JSON.parse(shift.site).radius, 60);
   assert.equal(JSON.parse(shift.site).maxAccuracy, 25);
 });
+
+test('completed shoots queue one private footage verification and require storage-manager evidence plus approval', async (t) => {
+  const { db, manager, staff, other } = await fixture(t);
+  const shoot = await manager('tasks', {
+    employeeId: 3, title: 'Studio shoot', category: 'Photo shoot', location: 'Studio',
+    startAt: iso('08:00'), endAt: iso('09:00'), clientName: 'Synthetic client', clientPhone: '9000000000',
+    latitude: 17.38, longitude: 78.48, income: '200',
+  });
+  await manager('shoot-done', { taskId: shoot.id });
+  await assert.rejects(manager('shoot-done', { taskId: shoot.id }), { status: 409 });
+  const initial = (await manager('state')).footageChecks[0];
+  assert.equal(initial.status, 'unassigned');
+  assert.equal((await staff('state')).footageChecks.length, 0);
+  assert.equal((await db.get('SELECT COUNT(*) AS total FROM footage_checks WHERE shoot_id = ?', shoot.id)).total, 1);
+  await assert.rejects(other('footage/manager', { employeeId: 3 }), { status: 403 });
+  await assert.rejects(manager('footage/manager', { employeeId: 1 }), { status: 400 });
+  await manager('footage/manager', { employeeId: 2 });
+  const check = (await staff('state')).footageChecks[0];
+  assert.equal(check.status, 'assigned');
+  assert.equal(check.shoot_id, shoot.id);
+  assert.equal(check.client_name, 'Synthetic client');
+  assert.ok(check.task_id);
+  assert.equal((await other('state')).footageChecks.length, 0);
+  await assert.rejects(staff('task-action', { taskId: check.task_id, action: 'complete' }), { status: 409 });
+  await assert.rejects(staff('operations/task-change', { taskId: check.task_id, kind: 'extension', minutes: 10, reason: 'Request' }), { status: 409 });
+  await assert.rejects(other('footage/submit', { id: check.id, incident: 'missing', note: 'Test' }), { status: 404 });
+  await staff('footage/submit', { id: check.id, incident: 'missing', note: 'Drive not delivered' });
+  await assert.rejects(manager('footage/review', { id: check.id, status: 'approved' }), { status: 409 });
+  await manager('footage/review', { id: check.id, status: 'returned', note: 'Check the backup drive.' });
+  const proof = { id: check.id, drive: 'D:', folder: 'Projects/Shoot A', backup: 'Drive B/Shoot A', transferred: true, stored: true };
+  await assert.rejects(staff('footage/submit', proof), { status: 400 });
+  const screenshotId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await db.run(`
+    INSERT INTO private_files(id, kind, record_id, uploaded_by, name, media_type, byte_length, sha256, created_at)
+    VALUES (?, 'task', ?, 2, 'evidence.png', 'image/png', 512, ?, ?)
+  `, screenshotId, check.task_id, '0'.repeat(64), Date.now());
+  await staff('footage/submit', { ...proof, screenshotId });
+  await assert.rejects(manager('operations/completion', { taskId: check.task_id, decision: 'approve' }), { status: 409 });
+  await assert.rejects(staff('footage/review', { id: check.id, status: 'approved' }), { status: 403 });
+  await manager('footage/review', { id: check.id, status: 'approved' });
+  const state = await manager('state');
+  assert.equal(state.footageChecks[0].status, 'approved');
+  assert.equal(state.tasks.find((task) => task.id === shoot.id).footage_status, 'approved');
+  assert.ok(state.tasks.find((task) => task.id === check.task_id).completed_at);
+  assert.ok((await staff('state')).operationNotices.some((note) => note.title === 'Footage verification approved'));
+  await manager('footage/manager', { employeeId: 3 });
+  assert.equal((await staff('state')).footageChecks[0].status, 'approved');
+  assert.equal((await other('state')).footageChecks.length, 0);
+});
+
+test('completed shoot allocations use integer paise and never change company booked or cash totals', async (t) => {
+  const { db, manager, staff, other } = await fixture(t);
+  const shoot = await manager('tasks', {
+    employeeId: 2, crew: [3], title: 'Completed shoot', category: 'Photo shoot', location: 'Studio',
+    startAt: iso('12:00'), endAt: iso('13:00'), income: '100.01',
+    clientName: 'Studio client', clientPhone: '9000000000', latitude: 17.38, longitude: 78.48,
+  });
+  await assert.rejects(manager('revenue/save', { shootId: shoot.id, allocations: [] }), { status: 404 });
+  await manager('shoot-done', { taskId: shoot.id });
+  const date = studioDay(Date.now());
+  await manager('payments', { taskId: shoot.id, amount: '25', date });
+  const later = Date.now();
+  await db.run('INSERT INTO task_sessions(task_id, employee_id, start_at, end_at) VALUES (?, 2, ?, ?)', shoot.id, later - 2 * 60 * minute, later);
+  const part = { employeeId: 2, type: 'percent', value: '66.66' };
+  await assert.rejects(staff('revenue/save', { shootId: shoot.id, allocations: [part] }), { status: 403 });
+  await assert.rejects(manager('revenue/save', { shootId: shoot.id, allocations: [part, part] }), { status: 400 });
+  await assert.rejects(manager('revenue/save', { shootId: shoot.id, allocations: [part, { employeeId: 3, type: 'amount', value: '50' }] }), { status: 409 });
+  await manager('revenue/save', { shootId: shoot.id, allocations: [part, { employeeId: 3, type: 'amount', value: '33.35' }] });
+  const allocations = await manager('revenue/allocations', { shootId: shoot.id });
+  assert.equal(allocations.entries.reduce((sum, row) => sum + row.amount_paise, 0), 10001);
+  await assert.rejects(other('revenue/report', { date, period: 'all', employeeId: 2 }), { status: 403 });
+  for (const period of ['day', 'week', 'month', 'all']) {
+    const report = await staff('revenue/report', { date, period });
+    assert.equal(report.total, 6666);
+    assert.equal(report.time, 2 * 60 * minute);
+    assert.equal(report.perHour, 3333);
+    assert.equal(report.rows.length, 1);
+    assert.equal(Object.hasOwn(report.rows[0], 'income_paise'), false);
+  }
+  assert.equal((await manager('state')).payments[0].amount_paise, 2500);
+  assert.equal((await db.get('SELECT income_paise FROM tasks WHERE id = ?', shoot.id)).income_paise, 10001);
+  assert.ok((await manager('operations/audit')).some((row) => row.subject === 'revenue allocation'));
+  await manager('revenue/save', { shootId: shoot.id, allocations: [] });
+  assert.equal((await staff('revenue/report', { date, period: 'all' })).total, 0);
+});

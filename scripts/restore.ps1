@@ -8,4 +8,4 @@ $destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFrom
 Set-Location (Join-Path $PSScriptRoot '..')
 & node scripts/database-backup.js restore $source $destination
 if ($LASTEXITCODE -ne 0) { throw 'Restore failed. The configured production database has not been replaced.' }
-Write-Host 'Restored to a separate file. Verify it before switching DATABASE_PATH.'
+Write-Host 'Restored to a separate database and, if present, an adjacent .files folder. Verify the pair before switching DATABASE_PATH or FILE_STORAGE_DIRECTORY.'

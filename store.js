@@ -1,4 +1,7 @@
 import { installOperationsSchema } from './lib/operations-schema.js';
+import { installRevenueSchema } from './lib/revenue.js';
+import { installFootageSchema } from './lib/footage-schema.js';
+import { installLocalFilesSchema } from './lib/local-files-schema.js';
 import { installGeofenceSchema } from './lib/geofence-schema.js';
 import { installHoursSchema } from './lib/hours-schema.js';
 
@@ -326,5 +329,8 @@ export function openStore(db) {
   if (db.prepare('PRAGMA user_version').get().user_version < 10) installOperationsSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 11) installHoursSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 12) installGeofenceSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 13) installLocalFilesSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 14) installFootageSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 15) installRevenueSchema(db);
   return db;
 }

@@ -13,3 +13,5 @@ uploads/
 *.sqlite-*
 *.sqlite3
 *.sqlite3-*
+*.sqlite.files/
+*.sqlite3.files/

@@ -1,6 +1,8 @@
 import {
   additionalShootLocations, assignedTo, availableShoots, boundarySampleDelay, fenceRadius, maxAdditionalShootSites, maxFixAge, officeSites, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
+import { createRevenueViews } from './revenue-views.js';
+import { createFootageViews } from './footage-views.js';
 import { createWorksheetViews } from './worksheet-views.js';
 import { createOperationsViews } from './operations-views.js';
 import { loginView, passwordField, togglePassword, workspaceRequest } from './access-view.js';
@@ -27,6 +29,7 @@ const adminNav = [
   ['schedule', 'Schedule', 'calendar-days'],
   ['shoot-calendar', 'Shoot calendar', 'camera'],
   ['task-board', 'Tasks', 'columns-3'],
+  ['footage', 'Footage storage', 'archive'],
   ['daily-plans', 'Daily plans', 'notebook-pen'],
   ['clients', 'Clients', 'contact-round'],
   ['approvals', 'Approvals', 'clipboard-check'],
@@ -35,6 +38,7 @@ const adminNav = [
   ['worksheet', 'Worksheets', 'notebook-pen'],
   ['leave', 'Leave & holidays', 'calendar-heart'],
   ['work-log', 'Work log', 'notebook-pen'],
+  ['revenue', 'Revenue contribution', 'indian-rupee'],
   ['payroll', 'Payslips', 'receipt'],
   ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
@@ -44,12 +48,14 @@ const employeeNav = [
   ['schedule', 'My Schedule', 'calendar-days'],
   ['shoot-calendar', 'Shoot calendar', 'camera'],
   ['task-board', 'Tasks', 'columns-3'],
+  ['footage', 'Footage storage', 'archive'],
   ['daily-plans', 'Daily plans', 'notebook-pen'],
   ['work', 'Available Work', 'briefcase'],
   ['attendance', 'Attendance', 'clock-3'],
   ['worksheet', 'Worksheets', 'notebook-pen'],
   ['leave', 'Leave & holidays', 'calendar-heart'],
   ['work-log', 'Work log', 'notebook-pen'],
+  ['revenue', 'Revenue contribution', 'indian-rupee'],
   ['payroll', 'Payslips', 'receipt'],
   ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
@@ -64,7 +70,7 @@ const categories = {
 
 const initialState = () => ({
   hrSettings: { monthly_leave: 2, week_off: 0, required_minutes: 480, verification_grace_minutes: 5 },
-  workPeriods: [], shiftReviews: [],
+  workPeriods: [], shiftReviews: [], footageChecks: [],
   plans: [], taskChanges: [], operationNotices: [], assignableStaff: [],
   holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [], attendanceGaps: [],
   office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
@@ -265,11 +271,13 @@ function officeCard() {
   const office = state.office;
   return `<section class="panel office-panel"><div class="panel-head">
     <div class="inline">${tile('map-pin', 'peach')}<div><h2>Company location</h2>
-      <p>${office ? e(office.name) + ' · 100 m attendance boundary' : 'Set the office coordinates to enable attendance.'}</p></div></div>
+      <p>${office ? e(office.name) + ' · ' + (office.radius ?? fenceRadius) + ' m attendance boundary' : 'Set the office coordinates to enable attendance.'}</p></div></div>
   </div>
   <div class="card-actions">${actionButton(office ? 'Edit location' : 'Set company location', 'office-location', 'map-pin', 'secondary')}
     ${mapLink(office)}
-  </div></section>`;
+  </div>
+  ${officeSites(office).length > 1 ? `<ul class="office-pins">${officeSites(office).slice(1).map((site) =>
+    `<li>${e(site.name)} ${mapLink(site)}</li>`).join('')}</ul>` : ''}</section>`;
 }
 
 function googleMapsUrl({ latitude, longitude }) {
@@ -406,7 +414,8 @@ function teamPage() {
     ...(state.calendarFeeds ? [calendarFeedStatus(person.id)] : []),
     shiftFor(person.id) ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral'),
     state.tasks.filter((task) => assignedTo(task, person.id) && !task.completed_at && task.shoot_status === 'booked').length,
-    actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id),
+    `<div class="card-actions">${actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id)}
+      ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', person.id)}</div>`,
   ]);
   return `${heading('Employees', 'Manage profiles and sign-in credentials.', `<div class="card-actions">
     ${actionButton('Access history', 'access-audit', 'list', 'secondary')}${actionButton('Add employee', 'new-employee', 'user-plus')}</div>`)}
@@ -500,8 +509,9 @@ function workControls(task) {
   const active = activeSession(task);
   return `<button type="button" class="btn primary" data-action="task-timer" data-value="${active ? 'pause' : 'start'}" data-id="${task.id}">
     ${icon(active ? 'pause' : 'play')}${active ? 'Pause timer' : 'Start timer'}</button>
-    ${sessionsFor(task).some((session) => session.employee_id === actorId) ? actionButton('Submit work for review', 'submit-completion', 'send', 'secondary', task.id) : ''}
-    ${actionButton('Block task', 'block-task', 'octagon-alert', 'secondary', task.id)}`;
+    ${task.footage_id ? viewLink('footage', 'Open footage verification') : ''}
+    ${!task.footage_id && sessionsFor(task).some((session) => session.employee_id === actorId) ? actionButton('Submit work for review', 'submit-completion', 'send', 'secondary', task.id) : ''}
+    ${!task.footage_id ? actionButton('Block task', 'block-task', 'octagon-alert', 'secondary', task.id) : ''}`;
 }
 
 function taskCard(task, inDialog = false) {
@@ -519,6 +529,7 @@ function taskCard(task, inDialog = false) {
       ${sites.length > 1 ? `<div class="shoot-site-list"><strong>Shoot locations</strong><ul>
         ${sites.map((site) => `<li class="inline">${icon('map-pin')}<span>${e(site.name)}</span> ${mapLink(site, true)}</li>`).join('')}
       </ul></div>` : `<div class="inline">${icon('map-pin')}${e(task.location)} ${mapLink(sites[0])}</div>`}
+      ${task.footage_status ? `<div class="inline">${icon('archive')}<span>Footage · ${e(footageViews.label(task.footage_status))}</span></div>` : ''}
       ${task.source_shoot_title ? `<div class="inline">${icon('camera')}<span>Shoot · ${e(task.source_shoot_title)}</span></div>` : ''}
       ${task.delivery_due_at ? `<div class="inline">${icon('clock-3')}<span>Delivery due ${shortDate.format(task.delivery_due_at)} at ${time(task.delivery_due_at)} IST</span></div>` : ''}
       ${task.client_name ? `<div class="inline">${icon('contact-round')}${e(task.client_name)} · <a class="map-link" href="tel:${e(task.client_phone)}">${e(task.client_phone)}</a></div>` : ''}
@@ -535,13 +546,16 @@ function taskCard(task, inDialog = false) {
       ${taskStatus(editing)}${!editing.completed_at && editing.delivery_due_at < Date.now() ? tag('Delivery overdue', 'peach') : ''}
       ${actionButton('View editing', 'details', 'arrow-right', 'secondary', editing.id)}
     </div>` : ''}
+    ${task.completion_file_id ? `<p><a class="text-link" href="/api/files/${e(task.completion_file_id)}">Download completion evidence</a></p>` : ''}
     ${task.completion_report ? `<p class="hr-task-note"><strong>Completion report</strong><br>${e(task.completion_report)}</p>` : ''}
     <div class="card-actions">${workControls(task)}
-      ${!isShoot && !task.is_open && !task.completed_at && task.shoot_status === 'booked' && task.work_state !== 'review'
+      ${!task.is_open ? actionButton('Task files', 'task-files', 'paperclip', 'secondary', task.id) : ''}
+      ${!isShoot && !task.footage_id && !task.is_open && !task.completed_at && task.shoot_status === 'booked' && task.work_state !== 'review'
         ? actionButton('Request task change', 'task-change', 'calendar-days', 'secondary', task.id) : ''}
-      ${manager() && task.work_state === 'review' ? actionButton('Approve completion', 'task-completion-approve', 'check', 'primary', task.id) +
+      ${manager() && task.work_state === 'review' && !task.footage_id ? actionButton('Approve completion', 'task-completion-approve', 'check', 'primary', task.id) +
         actionButton('Return task', 'task-completion-return', 'arrow-left', 'secondary', task.id) : ''}
-      ${manager() && (isShoot || (!task.completed_at && !task.daily_plan_id && task.work_state === 'ready')) ? actionButton('Edit schedule', 'edit-task', 'pencil', 'secondary', task.id) : ''}
+      ${manager() && !task.footage_id && (isShoot || (!task.completed_at && !task.daily_plan_id && task.work_state === 'ready')) ? actionButton('Edit schedule', 'edit-task', 'pencil', 'secondary', task.id) : ''}
+      ${manager() && isShoot && task.completed_at ? actionButton('Allocate revenue', 'allocate-revenue', 'indian-rupee', 'secondary', task.id) : ''}
       ${manager() && isShoot && task.completed_at && !editing ? actionButton('Schedule editing', 'schedule-editing', 'calendar-plus', 'primary', task.id) : ''}
       ${manager() && isShoot && !task.completed_at && !task.is_open && task.shoot_status === 'booked'
         ? actionButton('Mark shoot done', 'shoot-done', 'circle-check', 'secondary', task.id) : ''}
@@ -554,10 +568,15 @@ function clientsPage() {
     `<strong>${e(client.name)}</strong>`, `<a class="map-link" href="tel:${e(client.phone)}">${e(client.phone)}</a>`,
     e(client.email || '—'), e(client.notes || '—'),
     shoots().filter((task) => task.client_id === client.id).length,
-    actionButton('Edit client', 'edit-client', 'pencil', 'secondary', client.id),
+    (() => {
+      const checks = state.footageChecks.filter((row) => row.client_id === client.id);
+      return checks.length ? checks.filter((row) => row.status === 'approved').length + ' / ' + checks.length + ' verified' : '—';
+    })(),
+    `<div class="card-actions">${actionButton('Edit client', 'edit-client', 'pencil', 'secondary', client.id)}
+      ${actionButton('Client files', 'client-files', 'paperclip', 'secondary', client.id)}</div>`,
   ]);
   return `${heading('Clients', 'Find the owners, contacts, and notes for your shoots.', actionButton('Add client', 'new-client', 'user-plus'))}
-    <section class="panel">${rows.length ? table('Clients', ['Client', 'Mobile', 'Email', 'Notes', 'Shoots', 'Actions'], rows) : empty('Add a client here or enter their details when scheduling a shoot.')}</section>`;
+    <section class="panel">${rows.length ? table('Clients', ['Client', 'Mobile', 'Email', 'Notes', 'Shoots', 'Footage', 'Actions'], rows) : empty('Add a client here or enter their details when scheduling a shoot.')}</section>`;
 }
 
 function requestStatus(request) {
@@ -578,7 +597,7 @@ function approvalsPage() {
     ${hrViews.approvals()}
     ${worksheetViews.reviewTable(state.shiftReviews, true)}
     <section class="panel"><div class="panel-head"><h2>Task completion reviews</h2></div>
-    ${state.tasks.some((task) => task.work_state === 'review') ? state.tasks.filter((task) => task.work_state === 'review')
+    ${state.tasks.some((task) => task.work_state === 'review' && !task.footage_id) ? state.tasks.filter((task) => task.work_state === 'review' && !task.footage_id)
       .map((task) => `<div class="notice-row"><strong>${e(task.title)}</strong>${actionButton('Review task', 'details', 'arrow-right', 'secondary', task.id)}</div>`).join('')
       : empty('No tasks awaiting completion review.')}
     <p>${viewLink('daily-plans', 'Daily plans and task changes')}</p></section>`;
@@ -622,7 +641,8 @@ function financesPage() {
     e(state.tasks.find((task) => task.id === entry.task_id)?.title), money(entry.amount_paise), e(entry.note || '—'),
     actionButton('Edit payment', 'edit-payment', 'pencil', 'secondary', entry.id)]);
   const expenseRows = report.expenses.map((entry) => [e(entry.spent_on), e(entry.name), e(entry.category), money(entry.amount_paise), e(entry.note || '—'),
-    actionButton('Edit expense', 'edit-expense', 'pencil', 'secondary', entry.id)]);
+    `<div class="card-actions">${actionButton('Edit expense', 'edit-expense', 'pencil', 'secondary', entry.id)}
+      ${actionButton('Receipts', 'expense-files', 'paperclip', 'secondary', entry.id)}</div>`]);
   return `${heading('Finances', 'Track shoot income, payments, and studio expenses in INR.', actionButton('Add expense', 'add-expense', 'plus'))}
     <section class="panel finance-toolbar" aria-label="Finance report filters">
       <div><h2>${period}</h2><p>Payments and expenses use the date they were recorded against. Shoot balances use the scheduled shoot date.</p></div>
@@ -788,6 +808,14 @@ const operationsViews = createOperationsViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today,
 });
 
+const revenueViews = createRevenueViews({
+  actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, day, today, table, money, duration, render,
+});
+
+const footageViews = createFootageViews({
+  actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, day, time, tag,
+});
+
 const worksheetViews = createWorksheetViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today, day, table, duration, render,
   availableTravel: () => shoots().filter((task) => assignedTo(task, actorId) && !task.completed_at && !task.is_open && task.shoot_status === 'booked'),
@@ -810,7 +838,7 @@ function loadHrViews() {
 }
 
 const pages = {
-  dashboard, 'daily-plans': operationsViews.plansPage, worksheet: worksheetViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
+  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, worksheet: worksheetViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
   'task-board': () => hrViews.taskBoard(), 'work-log': () => hrViews.workLog(), leave: () => hrViews.leave(), payroll: () => hrViews.payroll(),
   announcements: () => hrViews.announcements(), clients: clientsPage, approvals: approvalsPage,
   work: availableWorkPage, finances: financesPage, attendance: () => hrViews.attendance(), notifications: notificationsPage,
@@ -905,6 +933,7 @@ function clearWorkspace(info) {
   hrViews?.reset();
   operationsViews.reset();
   worksheetViews.reset();
+  revenueViews.reset();
   mobileMenu = false;
   if (dialog.open) dialog.close();
   clearTimeout(toastTimer);
@@ -1003,9 +1032,62 @@ function entryForm(kind, fields, label, cancel = true) {
 
 function profileForm(note) {
   openDialog('My profile', e(actor().email), `
-    ${actionButton('Change password', 'change-password', 'key-round', 'secondary')}
+    <div class="card-actions">${actionButton('Change password', 'change-password', 'key-round', 'secondary')}
+    ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', actorId)}</div>
     ${entryForm('profile/notes', `<label class="full">Private notepad<textarea name="note" rows="6" maxlength="6000">${e(note)}</textarea></label>`, 'Save notes')}
   `);
+}
+
+async function fileRequest(path, method = 'GET', file) {
+  const options = { method, signal: AbortSignal.timeout(30_000) };
+  if (file) {
+    options.headers = { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) };
+    options.body = file;
+  }
+  const response = await fetch('/api/files' + path, options);
+  const result = await response.json();
+  if (!response.ok) {
+    if (response.status === 401) clearWorkspace({ actor: null });
+    throw new Error(result.error || 'The attachment request failed.');
+  }
+  return result;
+}
+
+async function uploadFormFile(form, taskId, file) {
+  if (!file?.size) return undefined;
+  const fileKey = [file.name, file.size, file.lastModified].join('|');
+  if (form.dataset.uploadKey !== fileKey) {
+    const result = await fileRequest(fileQuery('task', taskId), 'POST', file);
+    form.dataset.uploadKey = fileKey;
+    form.dataset.uploadId = result.id;
+  }
+  return form.dataset.uploadId;
+}
+
+function fileQuery(kind, record) {
+  return '?' + new URLSearchParams({ kind, record });
+}
+
+const fileContextNames = { task: 'Task files', client: 'Client files', expense: 'Expense receipts', profile: 'Profile photos' };
+
+async function filesDialog(kind, record) {
+  const items = await fileRequest(fileQuery(kind, record));
+  const task = kind === 'task' ? state.tasks.find((item) => item.id === record) : null;
+  const canAdd = !task || (!task.completed_at && task.shoot_status === 'booked');
+  const label = kind === 'profile' ? 'PNG or JPEG, up to 3 MB' : 'PNG, JPEG or PDF, up to 10 MB';
+  openDialog(fileContextNames[kind], label, `
+    <div class="operation-stack">
+      ${items.length ? items.map((item) => `<div class="notice-row"><div><a class="text-link" href="/api/files/${e(item.id)}">${e(item.name)}</a>
+        <p>${Math.ceil(item.byte_length / 1024)} KB · ${shortDate.format(item.created_at)}</p></div>
+        ${item.id !== task?.completion_file_id && (manager() || item.uploaded_by === actorId)
+          ? `<button type="button" class="btn secondary" data-action="remove-file" data-kind="${kind}" data-id="${record}" data-file-id="${e(item.id)}">Remove file</button>` : ''}</div>`).join('')
+      : empty('No files uploaded.')}
+      ${canAdd ? entryForm('local-file', `
+        <input type="hidden" name="kind" value="${kind}">
+        <input type="hidden" name="record" value="${record}">
+        <label class="full">Select a file<input name="attachment" type="file" required accept="${kind === 'profile' ? 'image/png,image/jpeg' : 'image/png,image/jpeg,application/pdf'}"></label>
+      `, 'Upload file', false) : ''}
+    </div>`);
 }
 
 function passwordForm() {
@@ -1491,6 +1573,8 @@ async function mutate(button, callback) {
 }
 
 const savedMessages = {
+  'revenue/save': 'Allocations saved.',
+  'footage/manager': 'Storage manager updated.', 'footage/submit': 'Verification submitted.', 'footage/review': 'Verification reviewed.',
   attendance: 'Shift ended.', 'attendance/period': 'Timer started.',
   'attendance/review-shift': 'Shift review saved.', 'worksheet/remark': 'Remark saved.',
   'operations/plan': 'Draft saved.', 'operations/review-plan': 'Plan reviewed.',
@@ -1544,6 +1628,10 @@ document.addEventListener('click', (event) => {
   const id = Number(button.dataset.id);
   const task = () => state.tasks.find((item) => item.id === id);
   if (snapshot === undefined && !['menu', 'sign-out', 'retry-dashboard'].includes(action)) return;
+  if (Object.hasOwn(footageViews.actions, action)) {
+    footageViews.actions[action](button, value, id);
+    return;
+  }
   if (Object.hasOwn(worksheetViews.actions, action)) {
     worksheetViews.actions[action](button, value, id);
     return;
@@ -1557,6 +1645,19 @@ document.addEventListener('click', (event) => {
     return;
   }
   switch (action) {
+    case 'task-files': case 'client-files': case 'expense-files': case 'profile-files':
+      mutate(button, () => filesDialog(action.slice(0, -6), id));
+      break;
+    case 'remove-file':
+      mutate(button, async () => {
+        await fileRequest('/' + encodeURIComponent(button.dataset.fileId), 'DELETE');
+        showToast('File removed.');
+        await filesDialog(button.dataset.kind, id);
+      });
+      break;
+    case 'allocate-revenue':
+      mutate(button, async () => revenueViews.allocationForm(await request('revenue/allocations', { shootId: id })));
+      break;
     case 'operations-audit':
       mutate(button, async () => {
         const rows = await request('operations/audit');
@@ -1866,6 +1967,16 @@ document.addEventListener('submit', (event) => {
   const data = Object.fromEntries(fields);
   if (kind === 'attendance' && data.action === 'end-shift' && watcher?.employeeId === actorId &&
       watcher.fix?.capturedAt >= Date.now() - maxFixAge) data.location = watcher.fix;
+  if (kind === 'revenue/save') {
+    const staff = fields.getAll('allocationEmployee');
+    const types = fields.getAll('allocationType');
+    data.allocations = fields.getAll('allocationValue').flatMap((value, index) =>
+      value ? [{ employeeId: staff[index], type: types[index], value }] : []);
+  }
+  if (kind === 'footage/submit') {
+    data.transferred = fields.has('transferred');
+    data.stored = fields.has('stored');
+  }
   if (kind === 'employees/access') data.active = data.active === 'true';
   if (kind === 'operations/plan') {
     const columns = ['entryTitle', 'entryFrom', 'entryTo', 'entryCategory', 'entryLocation'].map((key) => fields.getAll(key));
@@ -1886,17 +1997,17 @@ document.addEventListener('submit', (event) => {
     if (data.parentShootId) data.deliveryDueAt = `${data.deliveryDue}:00+05:30`;
   }
   if (kind === 'office' || (kind === 'tasks' && data.category === 'Photo shoot')) {
-      const names = fields.getAll('additionalLocationName');
-      const latitudes = fields.getAll('additionalLatitude');
-      const longitudes = fields.getAll('additionalLongitude');
-      data.additionalSites = fields.getAll('additionalMapsUrl').map((mapsUrl, index) => ({
-        mapsUrl, name: names[index], latitude: latitudes[index], longitude: longitudes[index],
-      }));
-      delete data.additionalMapsUrl;
-      delete data.additionalLocationName;
-      delete data.additionalLatitude;
-      delete data.additionalLongitude;
-      delete data.multipleShootLocations;
+    const names = fields.getAll('additionalLocationName');
+    const latitudes = fields.getAll('additionalLatitude');
+    const longitudes = fields.getAll('additionalLongitude');
+    data.additionalSites = fields.getAll('additionalMapsUrl').map((mapsUrl, index) => ({
+      mapsUrl, name: names[index], latitude: latitudes[index], longitude: longitudes[index],
+    }));
+    delete data.additionalMapsUrl;
+    delete data.additionalLocationName;
+    delete data.additionalLatitude;
+    delete data.additionalLongitude;
+    delete data.multipleShootLocations;
   }
   if (fields.has('acceptConflicts')) {
     data.acknowledgedConflicts = [...form.querySelectorAll('[data-conflict-key]')].map((item) => item.dataset.conflictKey);
@@ -1910,6 +2021,24 @@ document.addEventListener('submit', (event) => {
       authLabel.textContent = 'Signing in…';
     }
     try {
+      if (kind === 'local-file') {
+        await fileRequest(fileQuery(data.kind, data.record), 'POST', data.attachment);
+        await filesDialog(data.kind, Number(data.record));
+        showToast('File uploaded.');
+        return;
+      }
+      if (kind === 'footage/submit') {
+        data.screenshotId = await uploadFormFile(form, data.taskId, data.screenshot) || data.existingScreenshot || undefined;
+        delete data.screenshot;
+      }
+      if (kind === 'task-action' && data.action === 'submit-completion') {
+        data.fileId = await uploadFormFile(form, data.taskId, data.evidence);
+        delete data.evidence;
+      }
+      if (kind === 'revenue/report') {
+        await revenueViews.load(data, request);
+        return;
+      }
       if (kind === 'worksheet') {
         await worksheetViews.load(data, request);
         return;

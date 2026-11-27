@@ -1,3 +1,4 @@
+import { createLocalFiles, fileStoragePath } from './lib/local-files.js';
 import { refreshStudioNotices } from './lib/studio-notices.js';
 import { createServer } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
@@ -31,6 +32,11 @@ if (publicOrigin && (publicOrigin.href !== `${publicOrigin.origin}/` ||
 }
 const keyPath = process.env.TLS_KEY_PATH;
 const certPath = process.env.TLS_CERT_PATH;
+const files = database === ':memory:' ? null : createLocalFiles(db, {
+  directory: fileStoragePath(database, process.env.FILE_STORAGE_DIRECTORY),
+  siteOrigin: publicOrigin?.origin,
+  retentionDays: Number(process.env.FILE_RETENTION_DAYS || 30),
+});
 if (Boolean(keyPath) !== Boolean(certPath)) throw new Error('Set both TLS_KEY_PATH and TLS_CERT_PATH for direct HTTPS.');
 const secureCookies = Boolean(keyPath || publicOrigin?.protocol === 'https:' || process.env.SECURE_COOKIES === '1');
 if (!keyPath && !['localhost', '127.0.0.1', '::1'].includes(host)) {
@@ -51,6 +57,8 @@ const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/access.css', ['public/access.css', 'text/css']],
   ['/styles.css', ['public/styles.css', 'text/css']],
+  ['/revenue-views.js', ['public/revenue-views.js', 'text/javascript']],
+  ['/footage-views.js', ['public/footage-views.js', 'text/javascript']],
   ['/worksheet-views.js', ['public/worksheet-views.js', 'text/javascript']],
   ['/operations-views.js', ['public/operations-views.js', 'text/javascript']],
   ['/hr-views.js', ['public/hr-views.js', 'text/javascript']],
@@ -88,7 +96,8 @@ const handle = async (req, res) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()');
   try {
-    const path = new URL(req.url, 'http://localhost').pathname;
+    const url = new URL(req.url, 'http://localhost');
+    const path = url.pathname;
     if (path === '/healthz' && req.method === 'GET') {
       await db.get('SELECT 1');
       sendJson(res, 200, { ok: true });
@@ -99,6 +108,10 @@ const handle = async (req, res) => {
       const content = await calendar.read(db, feed[1], { track: req.method === 'GET' });
       res.writeHead(content === null ? 404 : 200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, no-store' });
       res.end(req.method === 'HEAD' ? undefined : content ?? '');
+      return;
+    }
+    if (files && (path === '/api/files' || path.startsWith('/api/files/'))) {
+      await files.serve(req, res, url);
       return;
     }
     if (path.startsWith('/api/')) {
@@ -132,6 +145,7 @@ const handle = async (req, res) => {
     });
     res.end(req.method === 'HEAD' ? undefined : content);
   } catch (error) {
+    if (res.headersSent || res.destroyed) { res.destroy(); return; }
     const status = error.status || (error.code === 'ENOENT' ? 404 : 500);
     if (status === 500) console.error('Request failed.', error.code ?? error.name);
     sendJson(res, status, { error: status === 500 ? 'Something went wrong. Try again.' : error.message,
@@ -157,6 +171,9 @@ setInterval(async () => {
     checkingReminders = false;
   }
 }, 15000).unref();
+
+setInterval(() => files?.prune().catch((error) => console.error('Could not prune expired attachments.', error.code ?? error.name)),
+  60 * 60_000).unref();
 
 server.listen(port, host, () => {
   const displayHost = host.includes(':') ? `[${host}]` : host;

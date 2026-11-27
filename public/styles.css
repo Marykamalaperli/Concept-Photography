@@ -360,3 +360,7 @@ table .tag{white-space:nowrap}
   #worksheet-print .table-wrap{overflow:visible}
   #worksheet-print :is(th,td){white-space:normal;padding:5px;font-size:9pt}
 }
+.footage-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));gap:12px;margin:12px 0}
+.footage-fields dt{color:var(--muted);font-size:.82rem}
+.footage-fields dd{margin:2px 0 0;overflow-wrap:anywhere}
+.form-grid .check-row{display:flex;align-items:center;gap:7px;min-height:34px}

@@ -1,9 +1,10 @@
 import { constants } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { copyFile, mkdir, mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { backup, DatabaseSync } from 'node:sqlite';
+import { attachmentPath, fileStoragePath } from '../lib/local-files.js';
 
 export function verifyDatabase(path) {
   const db = new DatabaseSync(path, { readOnly: true });
@@ -21,7 +22,39 @@ export function verifyDatabase(path) {
   }
 }
 
-async function snapshot(source, target) {
+async function verifyAttachments(database, directory, destination) {
+  const db = new DatabaseSync(database, { readOnly: true });
+  let count = 0;
+  try {
+    const hasFiles = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'private_files'").get();
+    if (!hasFiles) return count;
+    const rows = db.prepare('SELECT id, byte_length, sha256 FROM private_files WHERE removed_at IS NULL ORDER BY id');
+    for (const row of rows.iterate()) {
+      const file = await open(attachmentPath(directory, row.id), constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      let bytes;
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || info.size !== row.byte_length || info.size > 10 * 1024 * 1024) {
+          throw new Error('Attachment size is invalid for ' + row.id);
+        }
+        bytes = await file.readFile();
+      } finally {
+        await file.close();
+      }
+      if (createHash('sha256').update(bytes).digest('hex') !== row.sha256) throw new Error('Attachment checksum mismatch for ' + row.id);
+      if (destination) {
+        await mkdir(destination, { recursive: true, mode: 0o700 });
+        await writeFile(attachmentPath(destination, row.id), bytes, { flag: 'wx', mode: 0o600 });
+      }
+      count++;
+    }
+    return count;
+  } finally {
+    db.close();
+  }
+}
+
+async function snapshot(source, target, sourceDirectory = fileStoragePath(source)) {
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   const staging = await mkdtemp(join(dirname(target), 'concept-backup-'));
   const temporary = join(staging, 'verified.sqlite');
@@ -33,26 +66,41 @@ async function snapshot(source, target) {
       db.close();
     }
     verifyDatabase(temporary);
-    await copyFile(temporary, target, constants.COPYFILE_EXCL);
+    const attachments = join(staging, 'attachments');
+    const count = await verifyAttachments(temporary, sourceDirectory, attachments);
+    const targetDirectory = fileStoragePath(target);
+    if (count) await mkdir(targetDirectory, { mode: 0o700 });
+    try {
+      if (count) {
+        for (const entry of await readdir(attachments)) {
+          await copyFile(attachmentPath(attachments, entry), attachmentPath(targetDirectory, entry), constants.COPYFILE_EXCL);
+        }
+      }
+      await copyFile(temporary, target, constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (count) await rm(targetDirectory, { recursive: true, force: true });
+      throw error;
+    }
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
   return target;
 }
 
-export async function createBackup(source, directory, retentionDays = 30) {
+export async function createBackup(source, directory, retentionDays = 30, sourceDirectory = fileStoragePath(source)) {
   if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
     throw new Error('Backup retention must be from 1 to 3650 days.');
   }
   const now = new Date();
   const stamp = now.toISOString().replaceAll(':', '-');
   const target = resolve(directory, `workspace-${stamp}-${randomUUID()}.sqlite`);
-  await snapshot(source, target);
+  await snapshot(source, target, sourceDirectory);
   const backupName = /^workspace-(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2}\.\d{3}Z)-[a-f0-9-]{36}\.sqlite$/;
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const date = entry.isFile() && backupName.exec(entry.name);
     if (date && Date.parse(`${date[1]}:${date[2]}:${date[3]}`) < now - retentionDays * 86_400_000) {
       await rm(join(directory, entry.name));
+      await rm(fileStoragePath(join(directory, entry.name)), { recursive: true, force: true });
     }
   }
   return target;
@@ -70,9 +118,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const destination = directory ?? (action === 'backup' ? process.env.BACKUP_DIRECTORY || 'backups' : null);
   try {
     if (action === 'verify' && source) {
-      console.log(JSON.stringify(verifyDatabase(source)));
+      console.log(JSON.stringify({ ...verifyDatabase(source), attachments: await verifyAttachments(source, fileStoragePath(source)) }));
     } else if (action === 'backup' && source && destination) {
-      console.log(await createBackup(source, destination, Number(process.env.BACKUP_RETENTION_DAYS || 30)));
+      console.log(await createBackup(source, destination, Number(process.env.BACKUP_RETENTION_DAYS || 30),
+        fileStoragePath(source, process.env.FILE_STORAGE_DIRECTORY)));
     } else if (action === 'restore' && source && destination) {
       console.log(await restoreBackup(source, destination));
     } else {
