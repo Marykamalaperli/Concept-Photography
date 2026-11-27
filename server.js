@@ -1,3 +1,4 @@
+import { refreshStudioNotices } from './lib/studio-notices.js';
 import { createServer } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -50,7 +51,10 @@ const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/access.css', ['public/access.css', 'text/css']],
   ['/styles.css', ['public/styles.css', 'text/css']],
+  ['/worksheet-views.js', ['public/worksheet-views.js', 'text/javascript']],
+  ['/operations-views.js', ['public/operations-views.js', 'text/javascript']],
   ['/hr-views.js', ['public/hr-views.js', 'text/javascript']],
+  ['/work-hours.js', ['lib/work-hours.js', 'text/javascript']],
   ['/hr-policy.js', ['lib/hr-policy.js', 'text/javascript']],
   ['/app.js', ['public/app.js', 'text/javascript']],
   ['/finance-report.js', ['public/finance-report.js', 'text/javascript']],
@@ -144,6 +148,7 @@ setInterval(async () => {
   checkingReminders = true;
   try {
     await refreshReminders(db);
+    await refreshStudioNotices(db);
     await refreshAttendanceGaps(db);
     await mobilePush?.dispatch(db);
   } catch (error) {

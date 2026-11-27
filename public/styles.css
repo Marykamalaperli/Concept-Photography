@@ -323,3 +323,40 @@ table .tag{white-space:nowrap}
 .hr-pay-trend{list-style:none;margin:4px 0 0;padding:0;display:flex;align-items:end;gap:4px;height:33px;border-bottom:1px solid var(--stroke)}
 .hr-pay-trend li{display:flex;align-items:end;height:100%;min-width:0;flex:1}
 .hr-pay-trend li span{width:100%;background:var(--accent);border-radius:4px 4px 0 0;opacity:.75}
+
+/* Daily plans */
+.operation-stack{display:grid;gap:16px}
+.operation-toolbar{display:flex;align-items:end;flex-wrap:wrap;gap:14px}
+.operation-toolbar label{display:grid;gap:5px;min-width:0;font-size:.82rem;font-weight:650}
+.operation-toolbar :is(input,select){width:100%;min-width:0}
+.operation-row>p,.operation-record p{margin:8px 0;color:var(--muted);overflow-wrap:anywhere}
+.operation-record{padding-block:12px;border-top:1px solid var(--stroke)}
+.plan-entries{display:grid;gap:12px}
+.plan-entry{margin:0;min-inline-size:0;padding:12px;border:1px solid var(--stroke);border-radius:6px}
+.plan-entry legend{padding-inline:5px;font-weight:650}
+.plan-entries-list{list-style:none;margin:8px 0 12px;padding:0}
+.plan-entries-list li{display:grid;grid-template-columns:minmax(6.6rem,max-content) minmax(0,1fr);align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--stroke)}
+.plan-entries-list li span{overflow-wrap:anywhere}
+.plan-entries-list time{color:var(--muted);font-variant-numeric:tabular-nums}
+.plan-entries-list .btn{justify-self:start;text-align:start;white-space:normal}
+.plan-calendar-day{margin-top:16px}
+.form-grid .emergency-option span{display:flex;align-items:center;gap:8px}
+.form-grid .emergency-option small{font-weight:400;color:var(--muted)}
+.operation-stack .card-actions,.notice-row .card-actions{flex-wrap:wrap}
+@media(max-width:600px){
+  .operation-toolbar label{flex:1 1 9rem}
+  .notice-row:has(.card-actions){flex-wrap:wrap;align-items:start}
+  .notice-row .card-actions{flex-basis:100%}
+}
+.worksheet-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:4px 0}
+.worksheet-totals div{border-inline-start:2px solid var(--stroke);padding-inline-start:10px}
+.worksheet-totals dt{font-size:.82rem;color:var(--muted)}
+.worksheet-totals dd{margin:4px 0 0;font-weight:700;font-variant-numeric:tabular-nums}
+.worksheet-clock-actions{margin-block:8px;flex-wrap:wrap}
+@media print{
+  body:has(#worksheet-print) :is(#sidebar,#topbar,.page-head,main>.operation-stack>section,.card-actions,.toast,.skip-link){display:none!important}
+  body:has(#worksheet-print) main{margin:0;padding:0}
+  #worksheet-print .panel{break-inside:auto;box-shadow:none;padding:8px}
+  #worksheet-print .table-wrap{overflow:visible}
+  #worksheet-print :is(th,td){white-space:normal;padding:5px;font-size:9pt}
+}

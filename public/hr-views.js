@@ -1,3 +1,4 @@
+import { dailyHours } from './work-hours.js';
 import { assignedTo } from './attendance-policy.js';
 import { dayStart, dayLength, dateRange, weekday, isDayOff, leaveDays, leaveLedger, timeForDay } from './hr-policy.js';
 
@@ -223,8 +224,8 @@ export function createHrViews(ui) {
 
   function taskStage(task) {
     if (task.completed_at) return 'done';
-    if (task.blocked_reason) return 'blocked';
-    if (sessionsFor(task).length) return 'progress';
+    if (task.blocked_reason || task.work_state === 'reschedule') return 'blocked';
+    if (task.work_state === 'review' || sessionsFor(task).length) return 'progress';
     return 'todo';
   }
 
@@ -249,6 +250,7 @@ export function createHrViews(ui) {
             <button type="button" class="hr-title-button" data-action="details" data-id="${task.id}">${e(task.title)}</button>
             <p>${e(task.category)} · ${dayLabel(day(task.start_at))}</p>${manager() ? `<p>${e(employee(task.employee_id)?.name)}</p>` : ''}
             ${task.priority ? tag('Priority', 'peach') : ''}${task.blocked_reason ? `<p class="hr-message">${e(task.blocked_reason)}</p>` : ''}
+            ${task.work_state === 'reschedule' ? tag('Needs rescheduling', 'sand') : ''}${task.work_state === 'review' ? tag('In review', 'lavender') : ''}
             ${activeSession(task) ? tag('Timer running', 'sage') : ''}
           </article>`).join('') : empty(key === 'done' ? 'Tasks finished in the past two weeks appear here.' : 'Nothing here yet.')}</section>`;
       }).join('')}</div>`;
@@ -371,7 +373,8 @@ export function createHrViews(ui) {
   }
 
   function settingsForm() {
-    const { work_start, work_end, week_off, monthly_leave, required_minutes, verification_grace_minutes } = state().hrSettings;
+    const { work_start, work_end, week_off, monthly_leave, required_minutes, verification_grace_minutes,
+      lunch_start, lunch_minutes, personal_break_minutes, office_radius_m, shoot_radius_m, max_accuracy_m } = state().hrSettings;
     openDialog('Attendance & leave settings', 'Office hours are shown to staff. The weekly day off and leave allowance apply to attendance reports.',
       entryForm('hr/settings', `
         ${field('Office opens (IST)', `<input name="workStart" type="time" value="${e(work_start)}">`)}
@@ -379,7 +382,13 @@ export function createHrViews(ui) {
         ${field('Weekly day off', `<select name="weekOff">${options(weekdays.map((label, index) => [index, label]), week_off)}</select>`)}
         ${field('Casual days earned per month', `<input type="number" name="monthlyLeave" min="0" max="31" required value="${monthly_leave}">`)}
         ${field('Required working minutes per day', `<input type="number" name="requiredMinutes" min="0" max="1440" required value="${required_minutes}">`)}
-        ${field('GPS grace period (minutes)', `<input type="number" name="verificationGraceMinutes" min="2" max="60" required value="${verification_grace_minutes}">`)}`, 'Save settings'));
+        ${field('GPS grace period (minutes)', `<input type="number" name="verificationGraceMinutes" min="2" max="60" required value="${verification_grace_minutes}">`)}
+        ${field('Office radius (metres)', `<input name="officeRadius" type="number" min="50" max="100" required value="${office_radius_m}">`)}
+        ${field('Shoot radius (metres)', `<input name="shootRadius" type="number" min="50" max="100" required value="${shoot_radius_m}">`)}
+        ${field('Maximum GPS accuracy (metres)', `<input name="maxAccuracy" type="number" min="5" max="100" required value="${max_accuracy_m}">`)}
+        ${field('Scheduled lunch starts (IST)', `<input name="lunchStart" type="time" value="${e(lunch_start)}">`)}
+        ${field('Lunch target in minutes', `<input name="lunchMinutes" type="number" min="5" max="180" required value="${lunch_minutes}">`)}
+        ${field('Personal break warning in minutes', `<input name="personalBreakMinutes" type="number" min="5" max="180" required value="${personal_break_minutes}">`)}`, 'Save settings'));
   }
 
   function holidayForm(date) {
@@ -456,21 +465,20 @@ export function createHrViews(ui) {
     'hr-task-filter': (value) => { taskFilter = value; },
   };
 
+  function hoursToday() {
+    const { hrSettings, holidays, attendance, workPeriods, hrRequests } = state();
+    return dailyHours({ attendance: personal(attendance), periods: workPeriods, requests: personal(hrRequests), settings: hrSettings,
+      holidays, employee: actor(), date: today(), now: Date.now() });
+  }
+
   return {
     dashboard, attendance, leave, shootCalendar, taskBoard, workLog, payroll, announcements, approvals, actions, filters,
     todayClock() {
-      const correction = hrRequests('time').find((request) => request.status === 'approved' && request.day_from === today());
-      return elapsedClock(timeForDay(personal(state().attendance), today(), Date.now(), correction).total);
+      return elapsedClock(hoursToday().actual);
     },
     workTarget() {
-      const date = today();
-      const { hrSettings, holidays, attendance } = state();
-      const leave = hrRequests('leave').find((request) => request.status === 'approved' && request.day_from <= date && request.day_to >= date);
-      const count = leave ? (leave.leave_type === 'half' ? 0.5 : 1) : 0;
-      const required = isDayOff(date, hrSettings, holidays) ? 0 : hrSettings.required_minutes * (1 - count) * 60_000;
-      const correction = hrRequests('time').find((request) => request.status === 'approved' && request.day_from === date);
-      const { total } = timeForDay(personal(attendance), date, Date.now(), correction);
-      return { required, remaining: Math.max(0, required - total), aboveTarget: Math.max(0, total - required) };
+      const { required, remaining, overtime } = hoursToday();
+      return { required, remaining, aboveTarget: overtime };
     },
     timeRequestButton,
     officeHours() {

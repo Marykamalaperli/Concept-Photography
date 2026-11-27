@@ -1,3 +1,7 @@
+import { installOperationsSchema } from './lib/operations-schema.js';
+import { installGeofenceSchema } from './lib/geofence-schema.js';
+import { installHoursSchema } from './lib/hours-schema.js';
+
 export function openStore(db) {
   db.exec(`
     PRAGMA foreign_keys = ON;
@@ -319,5 +323,8 @@ export function openStore(db) {
       throw error;
     }
   }
+  if (db.prepare('PRAGMA user_version').get().user_version < 10) installOperationsSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 11) installHoursSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 12) installGeofenceSchema(db);
   return db;
 }
