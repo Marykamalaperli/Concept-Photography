@@ -1,9 +1,11 @@
+import { businessLabels } from './scoped-views.js';
 const roles = ['Photographer', 'Videographer', 'Video Editor', 'Photo Editor', 'Data Storage Manager', 'Studio Assistant', 'General Employee'];
 const capabilities = {
   'review-plans': 'Review daily plans',
   'review-tasks': 'Review task changes and completions',
   'review-attendance': 'Review shifts, leave and attendance corrections',
   'review-footage': 'Review footage storage',
+  ...businessLabels,
 };
 const decisions = {
   plan: ['operations/review-plan', 'decision', ['approved','rejected'], 'id'],

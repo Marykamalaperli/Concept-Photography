@@ -383,3 +383,9 @@ table .tag{white-space:nowrap}
 .next-work{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
 .next-work p{color:var(--muted);margin-top:4px}
 .worksheet-totals dd{overflow-wrap:anywhere}
+.avatar{position:relative;overflow:hidden}
+.avatar-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.profile-photo-preview{flex:none;border-radius:8px;object-fit:cover;background:var(--surface)}
+.scope-grant{border-top:1px solid var(--stroke);padding-top:12px}
+.scope-grant h3{margin-bottom:10px}
+.audit-details{max-inline-size:25rem;min-inline-size:12rem;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem}

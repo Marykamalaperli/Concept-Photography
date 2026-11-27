@@ -1,3 +1,5 @@
+import { createAuditViews } from './audit-views.js';
+import { businessLabels, createScopedViews } from './scoped-views.js';
 import { hasSavedDeparture, prepareDepartureStorage } from './offline-queue.js';
 import {
   additionalShootLocations, assignedTo, availableShoots, boundarySampleDelay, fenceRadius, maxAdditionalShootSites, maxFixAge, officeSites, presenceAt, returnSite, shootSites,
@@ -47,6 +49,7 @@ const adminNav = [
   ['payroll', 'Payslips', 'receipt'],
   ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
+  ['audit-history', 'Audit history', 'list'],
 ];
 const employeeNav = [
   ['dashboard', 'Dashboard', 'layout-dashboard'],
@@ -132,8 +135,11 @@ const day = (value) => dateKey.format(value);
 const today = () => day(Date.now());
 const tag = (label, color) => `<span class="tag ${color}"><span class="dot"></span>${label}</span>`;
 
-const nav = () => manager() ? adminNav : actor()?.permissions?.length ?
-  [...employeeNav, ['reviews', 'Review queue', 'inbox']] : employeeNav;
+const nav = () => manager() ? adminNav : [
+  ...employeeNav,
+  ...(actor()?.permissions?.some((permission) => permission.startsWith('review-')) ? [['reviews', 'Review queue', 'inbox']] : []),
+  ...(actor()?.permissions?.some((permission) => Object.hasOwn(businessLabels, permission)) ? [['scoped-work', 'Client and project desk', 'briefcase']] : []),
+];
 const pendingRequests = () => [...state.requests, ...state.hrRequests].filter((item) => item.status === 'pending');
 const shoots = () => state.tasks.filter((task) => task.category === 'Photo shoot');
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
@@ -154,7 +160,8 @@ function currentPage() {
 function avatar(person) {
   if (!person) return '';
   const letters = person.name.split(/\s+/).slice(0, 2).map((word) => Array.from(word)[0]).join('').toUpperCase();
-  return `<span class="avatar ${e(person.color)}" aria-hidden="true">${e(letters)}</span>`;
+  return `<span class="avatar ${e(person.color)}" aria-hidden="true">${e(letters)}
+    ${person.active_photo_id ? `<img class="avatar-photo" src="/api/avatars/${person.id}/${e(person.active_photo_id)}" alt="" width="38" height="38">` : ''}</span>`;
 }
 
 function duration(milliseconds, precise = false) {
@@ -434,6 +441,7 @@ function teamPage() {
     state.tasks.filter((task) => assignedTo(task, person.id) && !task.completed_at && task.shoot_status === 'booked').length,
     `<div class="card-actions">${actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id)}
       ${actionButton('Access role', 'assign-access-role', 'shield', 'secondary', person.id)}
+      ${actionButton('Client and project access', 'scope-access', 'folder-lock', 'secondary', person.id)}
       ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', person.id)}</div>`,
   ]);
   return `${heading('Employees', 'Manage profiles and sign-in credentials.', `<div class="card-actions">
@@ -874,6 +882,13 @@ const projectViews = createProjectViews({
   state: () => state, manager, e, actionButton, heading, entryForm, openDialog, empty, table, day, time, money, applyAction, request, mutate,
 });
 
+const auditViews = createAuditViews({ e, heading, actionButton, entryForm, empty, table, request, mutate, render, timeInput: studioDateTimeInput, state: () => state });
+
+const scopedViews = createScopedViews({
+  actor, state: () => state, e, icon, heading, actionButton, entryForm, openDialog, table, empty, request, mutate, timeInput: studioDateTimeInput,
+  render, clientForm, projectForm: projectViews.form,
+});
+
 const revenueViews = createRevenueViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, day, today, table, money, duration, render,
 });
@@ -904,7 +919,7 @@ function loadHrViews() {
 }
 
 const pages = {
-  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, reviews: reviewViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
+  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, reviews: reviewViews.page, 'audit-history': auditViews.page, 'scoped-work': scopedViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
   'task-board': () => hrViews.taskBoard(), 'work-log': () => hrViews.workLog(), leave: () => hrViews.leave(), payroll: () => hrViews.payroll(),
   announcements: () => hrViews.announcements(), clients: clientsPage, approvals: approvalsPage,
   work: availableWorkPage, finances: financesPage, attendance: () => hrViews.attendance(), notifications: notificationsPage,
@@ -1001,6 +1016,8 @@ function clearWorkspace(info) {
   worksheetViews.reset();
   revenueViews.reset();
   projectViews.reset();
+  scopedViews.reset();
+  auditViews.reset();
   reviewViews.reset();
   offlineDeparture = undefined;
   offlineStorage = undefined;
@@ -1021,7 +1038,11 @@ async function refresh({ force = false } = {}) {
   try {
     const [fresh] = await Promise.all([request('state'), loadHrViews()]);
     if (version !== refreshVersion) return;
-    if (JSON.stringify(actor()?.permissions ?? []) !== JSON.stringify(fresh.actor.permissions ?? [])) reviewViews.reset();
+    if (actor()?.scope_revision !== fresh.actor.scope_revision ||
+        JSON.stringify(actor()?.permissions ?? []) !== JSON.stringify(fresh.actor.permissions ?? [])) {
+      reviewViews.reset();
+      scopedViews.reset();
+    }
     session = { actor: fresh.actor };
     const fingerprint = JSON.stringify(fresh);
     if (snapshot === fingerprint && !force) return;
@@ -1147,18 +1168,23 @@ function fileQuery(kind, record) {
   return '?' + new URLSearchParams({ kind, record });
 }
 
-const fileContextNames = { task: 'Task files', client: 'Client files', expense: 'Expense receipts', profile: 'Profile photos' };
+const fileContextNames = { task: 'Task files', project: 'Project files', client: 'Client files', expense: 'Expense receipts', profile: 'Profile photos' };
 
 async function filesDialog(kind, record) {
   const items = await fileRequest(fileQuery(kind, record));
   const task = kind === 'task' ? state.tasks.find((item) => item.id === record) : null;
   const canAdd = !task || (!task.completed_at && task.shoot_status === 'booked');
+  const active = kind === 'profile' ? employee(record)?.active_photo_id : null;
   const label = kind === 'profile' ? 'PNG or JPEG, up to 3 MB' : 'PNG, JPEG or PDF, up to 10 MB';
   openDialog(fileContextNames[kind], label, `
     <div class="operation-stack">
-      ${items.length ? items.map((item) => `<div class="notice-row"><div><a class="text-link" href="/api/files/${e(item.id)}">${e(item.name)}</a>
-        <p>${Math.ceil(item.byte_length / 1024)} KB · ${shortDate.format(item.created_at)}</p></div>
-        ${item.id !== task?.completion_file_id && (manager() || item.uploaded_by === actorId)
+      ${items.length ? items.map((item) => `<div class="notice-row">
+        ${kind === 'profile' ? `<img class="profile-photo-preview" src="/api/files/${e(item.id)}?preview=1" alt="Uploaded profile photo" width="64" height="64">` : ''}
+        <div><a class="text-link" href="/api/files/${e(item.id)}">${e(item.name)}</a>
+        <p>${item.id === active ? 'Active photo · ' : ''}${Math.ceil(item.byte_length / 1024)} KB · ${shortDate.format(item.created_at)}</p></div>
+        ${kind === 'profile' && item.id !== active ? `<button class="btn secondary" type="button" data-action="activate-photo"
+          data-id="${record}" data-file-id="${e(item.id)}">Use photo</button>` : ''}
+        ${item.id !== task?.completion_file_id && (kind !== 'task' || manager() || item.uploaded_by === actorId)
           ? `<button type="button" class="btn secondary" data-action="remove-file" data-kind="${kind}" data-id="${record}" data-file-id="${e(item.id)}">Remove file</button>` : ''}</div>`).join('')
       : empty('No files uploaded.')}
       ${canAdd ? entryForm('local-file', `
@@ -1666,7 +1692,7 @@ async function mutate(button, callback) {
 const savedMessages = {
   projects: 'Project saved.', 'projects/resource': 'Project resource saved.',
   'revenue/save': 'Allocations saved.',
-  roles: 'Role permissions saved.', 'roles/assign': 'Access role saved.', 'hr/review': 'Request reviewed.',
+  scopes: 'Access saved.', roles: 'Role permissions saved.', 'roles/assign': 'Access role saved.', 'hr/review': 'Request reviewed.',
   'footage/manager': 'Storage manager updated.', 'footage/submit': 'Verification submitted.', 'footage/review': 'Verification reviewed.',
   attendance: 'Shift ended.', 'attendance/period': 'Timer started.',
   'attendance/review-shift': 'Shift review saved.', 'worksheet/remark': 'Remark saved.',
@@ -1801,6 +1827,14 @@ document.addEventListener('click', (event) => {
     reviewViews.actions[action](button, value, id);
     return;
   }
+  if (Object.hasOwn(auditViews.actions, action)) {
+    auditViews.actions[action](button, value, id);
+    return;
+  }
+  if (Object.hasOwn(scopedViews.actions, action)) {
+    scopedViews.actions[action](button, value, id);
+    return;
+  }
   if (Object.hasOwn(projectViews.actions, action)) {
     projectViews.actions[action](button, value, id);
     return;
@@ -1822,13 +1856,21 @@ document.addEventListener('click', (event) => {
     return;
   }
   switch (action) {
-    case 'task-files': case 'client-files': case 'expense-files': case 'profile-files':
+    case 'task-files': case 'project-files': case 'client-files': case 'expense-files': case 'profile-files':
       mutate(button, () => filesDialog(action.slice(0, -6), id));
+      break;
+    case 'activate-photo':
+      mutate(button, async () => {
+        await request('profile/photo', { employeeId: id, fileId: button.dataset.fileId });
+        await refreshAfterSave();
+        await filesDialog('profile', id);
+      });
       break;
     case 'remove-file':
       mutate(button, async () => {
         await fileRequest('/' + encodeURIComponent(button.dataset.fileId), 'DELETE');
         showToast('File removed.');
+        if (button.dataset.kind === 'profile') await refreshAfterSave();
         await filesDialog(button.dataset.kind, id);
       });
       break;
@@ -2144,7 +2186,7 @@ document.addEventListener('change', (event) => {
     }
   }
   if (input.name === 'unscheduled') toggleFields(form.querySelector('.task-planned-time'), !input.checked);
-  if (input.name === 'category') {
+  if (input.name === 'category' && form.querySelector('.shoot-fields')) {
     const shoot = input.value === 'Photo shoot';
     toggleFields(form.querySelector('.shoot-fields'), shoot);
     toggleFields(form.querySelector('.shoot-time-fields'), shoot);
@@ -2217,6 +2259,8 @@ document.addEventListener('submit', (event) => {
   if (kind === 'attendance' && data.action === 'end-shift' && watcher?.employeeId === actorId &&
       watcher.fix?.capturedAt >= Date.now() - maxFixAge) data.location = watcher.fix;
   if (kind === 'roles') data.permissions = fields.getAll('permission');
+  if (kind === 'scopes') data.enabled = data.enabled === 'true';
+  if (data.delegated === 'true') data.delegated = true;
   if (kind === 'revenue/save') {
     const staff = fields.getAll('allocationEmployee');
     const types = fields.getAll('allocationType');
@@ -2247,7 +2291,7 @@ document.addEventListener('submit', (event) => {
     }
     if (data.parentShootId) data.deliveryDueAt = `${data.deliveryDue}:00+05:30`;
   }
-  if (kind === 'office' || (kind === 'tasks' && data.category === 'Photo shoot')) {
+  if (kind === 'office' || (kind === 'tasks' && !data.delegated && data.category === 'Photo shoot')) {
     const names = fields.getAll('additionalLocationName');
     const latitudes = fields.getAll('additionalLatitude');
     const longitudes = fields.getAll('additionalLongitude');
@@ -2290,6 +2334,10 @@ document.addEventListener('submit', (event) => {
         await revenueViews.load(data, request);
         return;
       }
+      if (kind === 'audit/search') {
+        await auditViews.load(data);
+        return;
+      }
       if (kind === 'worksheet') {
         await worksheetViews.load(data, request);
         return;
@@ -2308,12 +2356,13 @@ document.addEventListener('submit', (event) => {
       }
       const ownsDialog = dialog.open && dialog.contains(form);
       if (ownsDialog) dialog.close();
-      if (ownsDialog && kind === 'tasks' && !data.parentShootId && !['schedule', 'shoot-calendar', 'task-board'].includes(page)) {
+      if (ownsDialog && kind === 'tasks' && !data.delegated && !data.parentShootId && !['schedule', 'shoot-calendar', 'task-board'].includes(page)) {
         location.hash = data.category === 'Photo shoot' ? '#shoot-calendar' : '#task-board';
       }
       showToast(data.action === 'submit-completion' ? 'Work submitted for review.' : savedMessages[kind]);
       await refreshAfterSave();
       if (page === 'reviews') await reviewViews.load();
+      if (page === 'scoped-work') await scopedViews.load();
       if (page === 'worksheet' && (kind === 'worksheet/remark' || kind === 'attendance/review-shift')) {
         await worksheetViews.load(worksheetViews.scope(), request);
       }

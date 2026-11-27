@@ -63,7 +63,7 @@ test('private uploads enforce scope, protect completion evidence and restore ori
     return response.headers.get('set-cookie').split(';')[0];
   };
   const [staff, manager, stranger] = await Promise.all([signIn('editor'), signIn('manager'), signIn('unassigned')]);
-  const upload = (kind, cookie, body = fileBytes, headers = {}) => api('files?kind=' + kind + '&record=1', {
+  const upload = (kind, cookie, body = fileBytes, headers = {}, record = 1) => api('files?kind=' + kind + '&record=' + record, {
     method: 'POST', headers: { cookie, 'content-type': 'application/octet-stream',
       'x-file-name': encodeURIComponent('Test evidence.png'), ...headers }, body,
   });
@@ -112,10 +112,42 @@ test('private uploads enforce scope, protect completion evidence and restore ori
   assert.equal((await api('files/' + loose.id, { headers: { cookie: staff } })).status, 404);
   assert.equal((await api('files/' + loose.id, { method: 'DELETE', headers: { cookie: manager } })).status, 200);
   assert.equal((await api('files/' + loose.id, { headers: { cookie: manager } })).status, 404);
+  const avatarResponse = await upload('profile', staff, fileBytes, {}, 2);
+  assert.equal(avatarResponse.status, 201);
+  const avatar = await avatarResponse.json();
+  const avatarPath = 'avatars/2/' + avatar.id;
+  assert.equal((await api(avatarPath, { headers: { cookie: staff } })).status, 404);
+  assert.equal((await json('profile/photo', stranger, { employeeId: 2, fileId: avatar.id })).status, 404);
+  assert.equal((await json('profile/photo', staff, { fileId: avatar.id })).status, 200);
+  const image = await api(avatarPath, { headers: { cookie: manager } });
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), fileBytes);
+  assert.equal((await api(avatarPath, { headers: { cookie: stranger } })).status, 404);
+  assert.equal((await json('roles/assign', manager, { employeeId: 3, role: 'Studio Assistant' })).status, 200);
+  assert.equal((await json('roles', manager, { role: 'Studio Assistant', permissions: ['manage-attachments','manage-resources'] })).status, 200);
+  assert.equal((await json('scopes', manager, { kind: 'project', employeeId: 3, recordId: project.id, enabled: true })).status, 200);
+  const scoped = await upload('project', stranger, fileBytes, {}, project.id);
+  assert.equal(scoped.status, 201);
+  const scopedFile = await scoped.json();
+  assert.equal((await api('files/' + scopedFile.id, { headers: { cookie: staff } })).status, 404);
+  assert.equal((await api('files/' + scopedFile.id, { headers: { cookie: stranger } })).status, 200);
+  assert.equal((await json('scopes', manager, { kind: 'project', employeeId: 3, recordId: project.id, enabled: false })).status, 200);
+  assert.equal((await api('files/' + scopedFile.id, { headers: { cookie: stranger } })).status, 404);
   const backup = await createBackup(source, join(folder, 'backups'), 30, directory);
   const restored = join(folder, 'restored.sqlite');
   await restoreBackup(backup, restored);
   assert.deepEqual(await readFile(attachmentPath(fileStoragePath(restored), file.id)), fileBytes);
+  assert.deepEqual(await readFile(attachmentPath(fileStoragePath(restored), avatar.id)), fileBytes);
+  const restoredDb = new DatabaseSync(restored, { readOnly: true });
+  try {
+    assert.equal(restoredDb.prepare('SELECT active_photo_id FROM employees WHERE id = 2').get().active_photo_id, avatar.id);
+  } finally {
+    restoredDb.close();
+  }
+  assert.equal((await api('files/' + avatar.id, { method: 'DELETE', headers: { cookie: staff } })).status, 200);
+  assert.equal((await api(avatarPath, { headers: { cookie: staff } })).status, 404);
+  assert.equal((await (await api('session', { headers: { cookie: staff } })).json()).actor.active_photo_id, null);
   await assert.rejects(readFile(attachmentPath(fileStoragePath(restored), loose.id)), { code: 'ENOENT' });
   await writeFile(attachmentPath(fileStoragePath(backup), file.id), Buffer.alloc(fileBytes.length));
   await assert.rejects(restoreBackup(backup, join(folder, 'invalid.sqlite')), /checksum mismatch/);

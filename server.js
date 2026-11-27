@@ -58,6 +58,8 @@ const assets = new Map([
   ['/access.css', ['public/access.css', 'text/css']],
   ['/styles.css', ['public/styles.css', 'text/css']],
   ['/offline-queue.js', ['public/offline-queue.js', 'text/javascript']],
+  ['/audit-views.js', ['public/audit-views.js', 'text/javascript']],
+  ['/scoped-views.js', ['public/scoped-views.js', 'text/javascript']],
   ['/review-views.js', ['public/review-views.js', 'text/javascript']],
   ['/projects-views.js', ['public/projects-views.js', 'text/javascript']],
   ['/revenue-views.js', ['public/revenue-views.js', 'text/javascript']],
@@ -113,7 +115,7 @@ const handle = async (req, res) => {
       res.end(req.method === 'HEAD' ? undefined : content ?? '');
       return;
     }
-    if (files && (path === '/api/files' || path.startsWith('/api/files/'))) {
+    if (files && (path === '/api/files' || path.startsWith('/api/files/') || path.startsWith('/api/avatars/'))) {
       await files.serve(req, res, url);
       return;
     }

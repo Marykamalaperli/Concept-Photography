@@ -1,3 +1,6 @@
+import { installAuditHistory } from './lib/audit-history.js';
+import { installProfilePhotos } from './lib/profile-photos.js';
+import { installScopedAccess } from './lib/scoped-access.js';
 import { installOperationPushSchema } from './lib/operation-push.js';
 import { installOfflineAttendanceSchema, installOfflineKeys } from './lib/offline-attendance.js';
 import { installDelegationSchema } from './lib/delegation.js';
@@ -354,5 +357,8 @@ export function openStore(db) {
   }
   if (db.prepare('PRAGMA user_version').get().user_version < 20) installOperationPushSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 21) installOfflineKeys(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 22) installScopedAccess(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 23) installProfilePhotos(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 24) installAuditHistory(db);
   return db;
 }
