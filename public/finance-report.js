@@ -22,6 +22,23 @@ export function financeReport(state, month, today, studioDay) {
   return { shoots, payments, expenses, overdue, expected, received, spent, outstanding, net: received - spent };
 }
 
+export function monthlyCashTrend(payments, expenses, month) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const months = new Map(Array.from({ length: 6 }, (_, index) => {
+    const period = new Date(Date.UTC(year, monthNumber - 6 + index, 1)).toISOString().slice(0, 7);
+    return [period, { period, received: 0, spent: 0 }];
+  }));
+  for (const payment of payments) {
+    const totals = months.get(payment.paid_on.slice(0, 7));
+    if (totals) totals.received += payment.amount_paise;
+  }
+  for (const expense of expenses) {
+    const totals = months.get(expense.spent_on.slice(0, 7));
+    if (totals) totals.spent += expense.amount_paise;
+  }
+  return [...months.values()].map((entry) => ({ ...entry, net: entry.received - entry.spent }));
+}
+
 function csvCell(value) {
   let text = String(value ?? '');
   if (typeof value === 'string' && /^(?:[\s\uFEFF]*[=+\-@]|[\t\r\n])/.test(text)) text = "'" + text;

@@ -13,7 +13,7 @@ import { hashPassword } from '../lib/accounts.js';
 import { mapsLocation } from '../lib/maps.js';
 import { refreshReminders } from '../lib/reminders.js';
 import { createMobilePush } from '../lib/mobile-push.js';
-import { financeCsv, financeReport } from '../public/finance-report.js';
+import { financeCsv, financeReport, monthlyCashTrend } from '../public/finance-report.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
 
@@ -82,6 +82,10 @@ test('monthly finance reports separate cash dates from shoot balances and escape
   assert.match(csv, /"' \+Example"/);
   assert.match(csv, /"Overdue balance"/);
   assert.doesNotMatch(csv, /2026-11-28|Cancelled/);
+  assert.deepEqual(monthlyCashTrend(state.payments, state.expenses, '2026-12').slice(-2), [
+    { period: '2026-11', received: 10000, spent: 0, net: 10000 },
+    { period: '2026-12', received: 20000, spent: 25050, net: -5050 },
+  ]);
 });
 
 test('a test reminder uses only the signed-in device subscription and enforces a cooldown', async () => {

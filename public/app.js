@@ -2,7 +2,7 @@ import {
   additionalShootLocations, assignedTo, availableShoots, fenceRadius, maxAdditionalShootSites, maxFixAge, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
 import { loginView, passwordField, togglePassword, workspaceRequest } from './access-view.js';
-import { financeCsv, financeReport } from './finance-report.js';
+import { financeCsv, financeReport, monthlyCashTrend } from './finance-report.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -255,7 +255,7 @@ function officeCard() {
   const office = state.office;
   return `<section class="panel office-panel"><div class="panel-head">
     <div class="inline">${tile('map-pin', 'peach')}<div><h2>Company location</h2>
-      <p>${office ? e(office.name) + ' · 100 m attendance boundary' : 'Paste a Google Maps link to enable office attendance.'}</p></div></div>
+      <p>${office ? e(office.name) + ' · 100 m attendance boundary' : 'Set the office coordinates to enable attendance.'}</p></div></div>
   </div>
   <div class="card-actions">${actionButton(office ? 'Edit location' : 'Set company location', 'office-location', 'map-pin', 'secondary')}
     ${mapLink(office)}
@@ -607,7 +607,9 @@ function financesPage() {
     ${metrics([['Expected shoot income', money(report.expected), 'indian-rupee', 'lavender'],
       ['Payments received', money(report.received), 'wallet', 'sage'], ['Pending for these shoots', money(report.outstanding), 'hourglass', 'sand'],
       ['Expenses', money(report.spent), 'receipt', 'peach']])}
-    <section class="panel net-panel"><div><h2>Cash profit ${financeMonth ? 'for the month' : 'to date'}</h2><p>Payments received less expenses recorded</p></div><strong>${money(report.net)}</strong></section>
+    <section class="panel net-panel"><div><h2>Cash profit ${financeMonth ? 'for the month' : 'to date'}</h2><p>Payments received less expenses recorded${report.received
+      ? ` · ${new Intl.NumberFormat('en-IN', { style: 'percent', maximumFractionDigits: 1 }).format(report.net / report.received)} cash margin` : ''}</p></div><strong>${money(report.net)}</strong></section>
+    ${cashTrendPanel()}
     <section class="panel finance-table"><div class="panel-head"><div><h2>Overdue payments</h2><p>Unpaid balances with a due date before today, across all shoots.</p></div>
       ${overdueRows.length ? tag(money(report.overdue.reduce((sum, entry) => sum + entry.pending, 0)) + ' overdue', 'sand') : ''}</div>
       ${overdueRows.length ? table('Overdue payments', ['Shoot', 'Due date', 'Outstanding', 'Actions'], overdueRows) : empty('No overdue payments.')}</section>
@@ -619,6 +621,22 @@ function financesPage() {
       <section class="panel expense-ledger"><div class="panel-head"><div><h2>Expense history</h2></div></div>
         ${expenseRows.length ? table('Expenses', ['Date', 'Expense', 'Category', 'Amount', 'Notes', 'Actions'], expenseRows) : empty('No expenses recorded.')}</section>
     </div>`;
+}
+
+function cashTrendPanel() {
+  const trend = monthlyCashTrend(state.payments, state.expenses, financeMonth || today().slice(0, 7));
+  const scale = Math.max(0, ...trend.map(({ received, spent }) => Math.max(received, spent)));
+  const label = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  return `<section class="panel finance-table">
+    <div class="panel-head"><div><h2>Cash trend</h2><p>Receipts, expenses, and net cash over six months.</p></div></div>
+    ${scale ? `<div class="cash-trend">${trend.map(({ period, received, spent, net }) =>
+      `<div class="cash-month"><strong>${label.format(Date.parse(period + '-01T12:00:00Z'))}</strong>
+        <div class="cash-month-values">
+          <span class="cash-value"><span>Received ${money(received)}</span><i class="cash-bar received" aria-hidden="true" style="--share:${received / scale * 100}%"></i></span>
+          <span class="cash-value"><span>Expenses ${money(spent)}</span><i class="cash-bar spent" aria-hidden="true" style="--share:${spent / scale * 100}%"></i></span>
+        </div><span>Net ${money(net)}</span>
+      </div>`).join('')}</div>` : empty('No receipts or expenses in these six months.')}
+  </section>`;
 }
 
 function exportFinances() {

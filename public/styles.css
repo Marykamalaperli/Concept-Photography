@@ -139,6 +139,7 @@ button.profile-head{min-height:42px;text-align:left;padding:3px 7px;border-color
   .breadcrumb{min-width:0;max-width:56%}
   .breadcrumb strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
+@media(max-width:430px){.breadcrumb strong{display:none}}
 @media(max-width:380px){.profile-head span.profile-name{display:none}}
 .stack{display:grid;gap:15px}
 .row-tags{display:flex;align-items:center;gap:5px;justify-content:flex-end;flex-wrap:wrap}
@@ -151,6 +152,13 @@ button.profile-head{min-height:42px;text-align:left;padding:3px 7px;border-color
 .net-panel p{color:var(--muted);font-size:12px;margin-top:4px}
 .net-panel strong{font:800 25px Manrope,sans-serif;color:var(--green)}
 .finance-table{margin-bottom:17px}
+.cash-trend{display:grid;gap:8px;font-size:12px;font-variant-numeric:tabular-nums}
+.cash-month{display:grid;grid-template-columns:5.5rem minmax(0,1fr) minmax(6rem,auto);gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--stroke)}
+.cash-month-values{min-width:0;display:grid;gap:4px}
+.cash-value{display:grid;grid-template-columns:minmax(7.75rem,max-content) minmax(0,1fr);gap:7px;align-items:center}
+.cash-bar{height:5px;width:var(--share);background:#30644d;border-radius:1px}
+.cash-bar.spent{background:#ad4b30}
+@media(max-width:520px){.cash-month{grid-template-columns:1fr auto;gap:7px}.cash-month-values{grid-column:1/-1;grid-row:2}}
 .finance-toolbar{display:flex;align-items:end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:17px}
 .finance-toolbar h2{font-size:17px}
 .finance-toolbar p,.editing-handoff p,.device-check p{color:var(--muted);font-size:12px;line-height:1.5;margin-top:4px}

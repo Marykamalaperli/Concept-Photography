@@ -23,6 +23,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - if: runner.os == 'Windows'
+        name: Validate Windows scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errorsFound = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errorsFound) | Out-Null
+            if ($errorsFound.Count) { throw "$($_.Name) has a PowerShell syntax error" }
+          }
       - run: npm run build:pages
       - if: runner.os == 'Linux'
         name: Audit the public launcher

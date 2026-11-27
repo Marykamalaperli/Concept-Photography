@@ -15,7 +15,7 @@ import { createCalendar } from './lib/calendar.js';
 import { createMobilePush } from './lib/mobile-push.js';
 import { refreshAttendanceGaps } from './lib/attendance-gaps.js';
 
-process.umask(0o077);
+if (process.platform !== 'win32') process.umask(0o077);
 
 const root = dirname(fileURLToPath(import.meta.url));
 const database = process.env.DATABASE_PATH || resolve(root, 'data/workforce.sqlite');

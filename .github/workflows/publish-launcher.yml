@@ -1,0 +1,45 @@
+name: Publish approved office launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      cutover_verified:
+        description: 'Office HTTPS, migration and cutover have been verified'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main' && inputs.cutover_verified
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: test -n "$WORKSPACE_URL" && npm run build:pages
+        env:
+          WORKSPACE_URL: ${{ vars.WORKSPACE_URL }}
+      - run: node scripts/audit-pages.js
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: publish

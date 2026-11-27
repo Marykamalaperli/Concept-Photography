@@ -27,7 +27,7 @@ async function readPassword() {
   }
 }
 
-process.umask(0o077);
+if (process.platform !== 'win32') process.umask(0o077);
 
 async function main() {
   const email = process.argv[2]?.trim().toLowerCase();

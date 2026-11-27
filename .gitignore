@@ -5,3 +5,11 @@ lighthouse-reports/
 .env*
 supabase/.branches/
 supabase/.temp/
+!.env.example
+backups/
+exports/
+uploads/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
