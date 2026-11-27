@@ -1,5 +1,5 @@
 export function financeReport(state, month, today, studioDay) {
-  const inPeriod = (date) => !month || date.slice(0, 7) === month;
+  const inPeriod = (date) => !month || date.slice(0, month.length) === month;
   const paid = new Map();
   for (const payment of state.payments) {
     paid.set(payment.task_id, (paid.get(payment.task_id) ?? 0) + payment.amount_paise);
@@ -58,7 +58,7 @@ export function financeCsv(report, month, tasks) {
       '', '', task.payment_due_on, '',
     ]),
     ...report.payments.map((entry) => [
-      'Payment', entry.paid_on, byId.get(entry.task_id)?.title, byId.get(entry.task_id)?.client_name, '', '',
+      'Payment', entry.paid_on, byId.get(entry.task_id)?.title, byId.get(entry.task_id)?.client_name, entry.category || 'Shoot payment', '',
       rupees(entry.amount_paise), '', '', '', '', entry.note,
     ]),
     ...report.expenses.map((entry) => [
@@ -69,4 +69,23 @@ export function financeCsv(report, month, tasks) {
     ]),
   ];
   return '\uFEFF' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
+}
+
+export function financeGroups(report, tasks, projects) {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const projectNames = new Map(projects.map((item) => [item.id, item.name]));
+  function group(rows, label) {
+    const totals = new Map();
+    for (const row of rows) {
+      const name = label(row);
+      totals.set(name, (totals.get(name) ?? 0) + row.amount_paise);
+    }
+    return [...totals].sort((first, second) => second[1] - first[1]);
+  }
+  return [
+    ['Receipts by client', group(report.payments, (row) => byId.get(row.task_id)?.client_name || 'No client')],
+    ['Receipts by project', group(report.payments, (row) => projectNames.get(byId.get(row.task_id)?.project_id) || 'No project')],
+    ['Receipts by category', group(report.payments, (row) => row.category || 'Shoot payment')],
+    ['Expenses by category', group(report.expenses, (row) => row.category)],
+  ];
 }

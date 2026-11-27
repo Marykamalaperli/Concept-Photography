@@ -288,3 +288,38 @@ test('completed shoot allocations use integer paise and never change company boo
   await manager('revenue/save', { shootId: shoot.id, allocations: [] });
   assert.equal((await staff('revenue/report', { date, period: 'all' })).total, 0);
 });
+
+test('project access, client categories and financial history follow project assignments', async (t) => {
+  const { manager, staff, other } = await fixture(t);
+  const client = await manager('clients', {
+    name: 'Synthetic customer', phone: '9000000000', category: 'Retail', postalAddress: 'Studio address',
+  });
+  const project = await manager('projects', { clientId: client.id, name: 'Photography references', category: 'Portfolio' });
+  assert.equal((await manager('state')).clients.find((row) => row.id === client.id).category, 'Retail');
+  await assert.rejects(staff('projects/detail', { id: project.id }), { status: 404 });
+  await assert.rejects(staff('projects', { clientId: client.id, name: 'Staff update', category: 'Portfolio' }), { status: 403 });
+  const booking = {
+    title: 'Portfolio shoot', category: 'Photo shoot', location: 'Studio', employeeId: 2,
+    startAt: iso('15:00'), endAt: iso('17:00'), income: '300', latitude: 17.38, longitude: 78.48,
+    projectId: project.id,
+  };
+  const unrelated = await manager('clients', { name: 'Other client', phone: '9000000001' });
+  await assert.rejects(manager('tasks', { ...booking, clientId: unrelated.id }), { status: 400 });
+  const shoot = await manager('tasks', { ...booking, clientId: client.id });
+  await manager('payments', { taskId: shoot.id, amount: '100', date: studioDay(Date.now()) });
+  await assert.rejects(manager('projects/resource', { projectId: project.id, kind: 'reference', title: 'Invalid', url: 'http://example.invalid' }), { status: 400 });
+  await manager('projects/resource', { projectId: project.id, kind: 'delivery', title: 'Gallery', url: 'https://example.invalid/gallery' });
+  assert.equal((await other('state')).projects.length, 0);
+  assert.equal((await staff('state')).projects[0].id, project.id);
+  const staffDetails = await staff('projects/detail', { id: project.id });
+  assert.equal(staffDetails.resources[0].title, 'Gallery');
+  assert.equal(staffDetails.days, 1);
+  assert.equal(Object.hasOwn(staffDetails, 'payments'), false);
+  assert.equal(Object.hasOwn(staffDetails.shoots[0], 'income_paise'), false);
+  const adminDetails = await manager('projects/detail', { id: project.id });
+  assert.equal(adminDetails.booked, 30000);
+  assert.equal(adminDetails.received, 10000);
+  assert.equal(adminDetails.outstanding, 20000);
+  assert.deepEqual(adminDetails.participants.map((row) => row.employee_id), [2]);
+  await assert.rejects(other('projects/detail', { id: project.id }), { status: 404 });
+});

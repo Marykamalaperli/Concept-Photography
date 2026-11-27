@@ -1,12 +1,13 @@
 import {
   additionalShootLocations, assignedTo, availableShoots, boundarySampleDelay, fenceRadius, maxAdditionalShootSites, maxFixAge, officeSites, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
+import { createProjectViews } from './projects-views.js';
 import { createRevenueViews } from './revenue-views.js';
 import { createFootageViews } from './footage-views.js';
 import { createWorksheetViews } from './worksheet-views.js';
 import { createOperationsViews } from './operations-views.js';
 import { loginView, passwordField, togglePassword, workspaceRequest } from './access-view.js';
-import { financeCsv, financeReport, monthlyCashTrend } from './finance-report.js';
+import { financeCsv, financeGroups, financeReport, monthlyCashTrend } from './finance-report.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -31,6 +32,7 @@ const adminNav = [
   ['task-board', 'Tasks', 'columns-3'],
   ['footage', 'Footage storage', 'archive'],
   ['daily-plans', 'Daily plans', 'notebook-pen'],
+  ['projects', 'Projects', 'folder-open'],
   ['clients', 'Clients', 'contact-round'],
   ['approvals', 'Approvals', 'clipboard-check'],
   ['finances', 'Finances', 'wallet'],
@@ -50,6 +52,7 @@ const employeeNav = [
   ['task-board', 'Tasks', 'columns-3'],
   ['footage', 'Footage storage', 'archive'],
   ['daily-plans', 'Daily plans', 'notebook-pen'],
+  ['projects', 'Projects', 'folder-open'],
   ['work', 'Available Work', 'briefcase'],
   ['attendance', 'Attendance', 'clock-3'],
   ['worksheet', 'Worksheets', 'notebook-pen'],
@@ -70,7 +73,7 @@ const categories = {
 
 const initialState = () => ({
   hrSettings: { monthly_leave: 2, week_off: 0, required_minutes: 480, verification_grace_minutes: 5 },
-  workPeriods: [], shiftReviews: [], footageChecks: [],
+  projects: [], workPeriods: [], shiftReviews: [], footageChecks: [],
   plans: [], taskChanges: [], operationNotices: [], assignableStaff: [],
   holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [], attendanceGaps: [],
   office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
@@ -99,6 +102,7 @@ let shownShootIds = '';
 let mobileDevice;
 let checkedSite = '';
 let locationCheck = '';
+let clientSearch = '';
 let financeMonth = '';
 
 const e = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -529,6 +533,7 @@ function taskCard(task, inDialog = false) {
       ${sites.length > 1 ? `<div class="shoot-site-list"><strong>Shoot locations</strong><ul>
         ${sites.map((site) => `<li class="inline">${icon('map-pin')}<span>${e(site.name)}</span> ${mapLink(site, true)}</li>`).join('')}
       </ul></div>` : `<div class="inline">${icon('map-pin')}${e(task.location)} ${mapLink(sites[0])}</div>`}
+      ${task.project_id ? `<div class="inline">${actionButton('View project', 'project-detail', 'folder-open', 'secondary', task.project_id)}</div>` : ''}
       ${task.footage_status ? `<div class="inline">${icon('archive')}<span>Footage · ${e(footageViews.label(task.footage_status))}</span></div>` : ''}
       ${task.source_shoot_title ? `<div class="inline">${icon('camera')}<span>Shoot · ${e(task.source_shoot_title)}</span></div>` : ''}
       ${task.delivery_due_at ? `<div class="inline">${icon('clock-3')}<span>Delivery due ${shortDate.format(task.delivery_due_at)} at ${time(task.delivery_due_at)} IST</span></div>` : ''}
@@ -564,9 +569,10 @@ function taskCard(task, inDialog = false) {
 }
 
 function clientsPage() {
-  const rows = state.clients.map((client) => [
+  const rows = state.clients.filter((client) => !clientSearch || [client.name, client.phone, client.email, client.category]
+    .some((value) => value?.toLowerCase().includes(clientSearch.toLowerCase()))).map((client) => [
     `<strong>${e(client.name)}</strong>`, `<a class="map-link" href="tel:${e(client.phone)}">${e(client.phone)}</a>`,
-    e(client.email || '—'), e(client.notes || '—'),
+    e(client.email || '—'), e(client.category || '—'), e(client.postal_address || '—'), e(client.notes || '—'),
     shoots().filter((task) => task.client_id === client.id).length,
     (() => {
       const checks = state.footageChecks.filter((row) => row.client_id === client.id);
@@ -576,7 +582,9 @@ function clientsPage() {
       ${actionButton('Client files', 'client-files', 'paperclip', 'secondary', client.id)}</div>`,
   ]);
   return `${heading('Clients', 'Find the owners, contacts, and notes for your shoots.', actionButton('Add client', 'new-client', 'user-plus'))}
-    <section class="panel">${rows.length ? table('Clients', ['Client', 'Mobile', 'Email', 'Notes', 'Shoots', 'Footage', 'Actions'], rows) : empty('Add a client here or enter their details when scheduling a shoot.')}</section>`;
+    <section class="panel"><div class="operation-toolbar"><label>Search clients<input type="search" id="client-search" value="${e(clientSearch)}" placeholder="Name, mobile, email or category"></label></div>
+      ${rows.length ? table('Clients', ['Client', 'Mobile', 'Email', 'Category', 'Address', 'Notes', 'Shoots', 'Footage', 'Actions'], rows) :
+        empty(clientSearch ? 'No clients match your search.' : 'Add a client here or enter their details when scheduling a shoot.')}</section>`;
 }
 
 function requestStatus(request) {
@@ -622,7 +630,7 @@ function paidFor(taskId) {
 
 function financesPage() {
   const report = financeReport(state, financeMonth, today(), day);
-  const period = financeMonth ? new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: zone })
+  const period = financeMonth.length === 4 ? financeMonth : financeMonth ? new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: zone })
     .format(Date.parse(`${financeMonth}-01T12:00:00+05:30`)) : 'All time';
   const rows = report.shoots.map(({ task, expected, received, pending, cancelled }) => {
     const date = task.payment_due_on;
@@ -638,24 +646,31 @@ function financesPage() {
     actionButton('Record payment', 'record-payment', 'plus', 'secondary', task.id),
   ]);
   const paymentRows = report.payments.map((entry) => [e(entry.paid_on),
-    e(state.tasks.find((task) => task.id === entry.task_id)?.title), money(entry.amount_paise), e(entry.note || '—'),
+    e(state.tasks.find((task) => task.id === entry.task_id)?.title), money(entry.amount_paise), e(entry.category || 'Shoot payment'), e(entry.note || '—'),
     actionButton('Edit payment', 'edit-payment', 'pencil', 'secondary', entry.id)]);
   const expenseRows = report.expenses.map((entry) => [e(entry.spent_on), e(entry.name), e(entry.category), money(entry.amount_paise), e(entry.note || '—'),
     `<div class="card-actions">${actionButton('Edit expense', 'edit-expense', 'pencil', 'secondary', entry.id)}
       ${actionButton('Receipts', 'expense-files', 'paperclip', 'secondary', entry.id)}</div>`]);
-  return `${heading('Finances', 'Track shoot income, payments, and studio expenses in INR.', actionButton('Add expense', 'add-expense', 'plus'))}
+  return `<div id="finance-print">${heading('Finances', 'Track shoot income, payments, and studio expenses in INR.', actionButton('Add expense', 'add-expense', 'plus'))}
     <section class="panel finance-toolbar" aria-label="Finance report filters">
       <div><h2>${period}</h2><p>Payments and expenses use the date they were recorded against. Shoot balances use the scheduled shoot date.</p></div>
-      <div class="finance-actions"><label>Report month<input type="month" id="finance-month" value="${e(financeMonth)}" placeholder="YYYY-MM"></label>
+      <div class="finance-actions"><label>Report month<input type="month" id="finance-month" value="${e(financeMonth.length === 7 ? financeMonth : '')}" placeholder="YYYY-MM"></label>
+        <label>Report year<input type="number" inputmode="numeric" id="finance-year" min="1900" max="9999"
+          value="${financeMonth.length === 4 ? e(financeMonth) : ''}" placeholder="YYYY"></label>
         ${financeMonth ? actionButton('All time', 'finance-clear', 'calendar-days', 'secondary') : ''}
-        ${actionButton('Export CSV', 'export-finance', 'download', 'secondary')}</div>
+        ${actionButton('Export CSV', 'export-finance', 'download', 'secondary')}
+        ${actionButton('Print or save PDF', 'print-finance', 'printer', 'secondary')}</div>
     </section>
     ${metrics([['Expected shoot income', money(report.expected), 'indian-rupee', 'lavender'],
       ['Payments received', money(report.received), 'wallet', 'sage'], ['Pending for these shoots', money(report.outstanding), 'hourglass', 'sand'],
       ['Expenses', money(report.spent), 'receipt', 'peach']])}
-    <section class="panel net-panel"><div><h2>Cash profit ${financeMonth ? 'for the month' : 'to date'}</h2><p>Payments received less expenses recorded${report.received
+    <section class="panel net-panel"><div><h2>Cash profit ${financeMonth ? 'for this period' : 'to date'}</h2><p>Payments received less expenses recorded${report.received
       ? ` · ${new Intl.NumberFormat('en-IN', { style: 'percent', maximumFractionDigits: 1 }).format(report.net / report.received)} cash margin` : ''}</p></div><strong>${money(report.net)}</strong></section>
     ${cashTrendPanel()}
+    <div class="finance-breakdowns">${financeGroups(report, state.tasks, state.projects).map(([label, rows]) => `<section class="panel">
+      <div class="panel-head"><h2>${label}</h2></div>
+      ${rows.length ? table(label, ['Name', 'Total'], rows.map(([name, total]) => [e(name), money(total)])) : empty('No transactions in this period.')}
+    </section>`).join('')}</div>
     <section class="panel finance-table"><div class="panel-head"><div><h2>Overdue payments</h2><p>Unpaid balances with a due date before today, across all shoots.</p></div>
       ${overdueRows.length ? tag(money(report.overdue.reduce((sum, entry) => sum + entry.pending, 0)) + ' overdue', 'sand') : ''}</div>
       ${overdueRows.length ? table('Overdue payments', ['Shoot', 'Due date', 'Outstanding', 'Actions'], overdueRows) : empty('No overdue payments.')}</section>
@@ -663,14 +678,14 @@ function financesPage() {
       ${rows.length ? table('Shoot balances', ['Shoot', 'Expected', 'Received', 'Pending', 'Due date', 'Actions'], rows) : empty('No shoots in this period.')}</section>
     <div class="dashboard-grid ledger-panels">
       <section class="panel"><div class="panel-head"><div><h2>Payment history</h2></div></div>
-        ${paymentRows.length ? table('Payments', ['Date', 'Shoot', 'Amount', 'Reference', 'Actions'], paymentRows) : empty('No payments recorded.')}</section>
+        ${paymentRows.length ? table('Payments', ['Date', 'Shoot', 'Amount', 'Category', 'Reference', 'Actions'], paymentRows) : empty('No payments recorded.')}</section>
       <section class="panel expense-ledger"><div class="panel-head"><div><h2>Expense history</h2></div></div>
         ${expenseRows.length ? table('Expenses', ['Date', 'Expense', 'Category', 'Amount', 'Notes', 'Actions'], expenseRows) : empty('No expenses recorded.')}</section>
-    </div>`;
+    </div></div>`;
 }
 
 function cashTrendPanel() {
-  const trend = monthlyCashTrend(state.payments, state.expenses, financeMonth || today().slice(0, 7));
+  const trend = monthlyCashTrend(state.payments, state.expenses, (financeMonth.length === 4 ? financeMonth + '-12' : financeMonth) || today().slice(0, 7));
   const scale = Math.max(0, ...trend.map(({ received, spent }) => Math.max(received, spent)));
   const label = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' });
   return `<section class="panel finance-table">
@@ -680,7 +695,8 @@ function cashTrendPanel() {
         <div class="cash-month-values">
           <span class="cash-value"><span>Received ${money(received)}</span><i class="cash-bar received" aria-hidden="true" style="--share:${received / scale * 100}%"></i></span>
           <span class="cash-value"><span>Expenses ${money(spent)}</span><i class="cash-bar spent" aria-hidden="true" style="--share:${spent / scale * 100}%"></i></span>
-        </div><span>Net ${money(net)}</span>
+          <span class="cash-value"><span>Profit or loss ${money(net)}</span><i class="cash-bar ${net < 0 ? 'spent' : 'received'}" aria-hidden="true" style="--share:${Math.abs(net) / scale * 100}%"></i></span>
+        </div>
       </div>`).join('')}</div>` : empty('No receipts or expenses in these six months.')}
   </section>`;
 }
@@ -808,6 +824,10 @@ const operationsViews = createOperationsViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today,
 });
 
+const projectViews = createProjectViews({
+  state: () => state, manager, e, actionButton, heading, entryForm, openDialog, empty, table, day, time, money, applyAction, request, mutate,
+});
+
 const revenueViews = createRevenueViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, day, today, table, money, duration, render,
 });
@@ -838,7 +858,7 @@ function loadHrViews() {
 }
 
 const pages = {
-  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, worksheet: worksheetViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
+  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
   'task-board': () => hrViews.taskBoard(), 'work-log': () => hrViews.workLog(), leave: () => hrViews.leave(), payroll: () => hrViews.payroll(),
   announcements: () => hrViews.announcements(), clients: clientsPage, approvals: approvalsPage,
   work: availableWorkPage, finances: financesPage, attendance: () => hrViews.attendance(), notifications: notificationsPage,
@@ -934,6 +954,8 @@ function clearWorkspace(info) {
   operationsViews.reset();
   worksheetViews.reset();
   revenueViews.reset();
+  projectViews.reset();
+  clientSearch = '';
   mobileMenu = false;
   if (dialog.open) dialog.close();
   clearTimeout(toastTimer);
@@ -1133,6 +1155,8 @@ function clientForm(client) {
     <label class="full">Client name<input name="name" required maxlength="100" value="${e(client?.name)}"></label>
     <label>Mobile number<input name="phone" type="tel" required maxlength="30" value="${e(client?.phone)}"></label>
     <label>Email address<input name="email" type="email" maxlength="254" value="${e(client?.email)}"></label>
+    <label class="full">Address<input name="postalAddress" maxlength="350" value="${e(client?.postal_address)}"></label>
+    <label class="full">Category<input name="category" maxlength="100" value="${e(client?.category)}"></label>
     <label class="full">Notes<textarea name="notes" maxlength="1000" rows="3">${e(client?.notes)}</textarea></label>
   `, 'Save client'));
 }
@@ -1258,6 +1282,10 @@ function taskForm(task, type = 'all', sourceShoot = null) {
           </div></fieldset>` : ''}
         <label class="full">Client<select name="clientId"><option value="">Enter owner details</option>
           ${state.clients.map((client) => `<option value="${client.id}" ${client.id === clientId ? 'selected' : ''}>${e(client.name)} · ${e(client.phone)}</option>`).join('')}</select></label>
+        <label class="full project-picker" ${clientId ? '' : 'hidden'}>Project (optional)<select name="projectId" ${clientId ? '' : 'disabled'}>
+          <option value="">No project</option>${state.projects.filter((item) => item.client_id === clientId).map((item) =>
+            `<option value="${item.id}"${item.id === task?.project_id ? ' selected' : ''}>${e(item.name)}</option>`).join('')}
+        </select></label>
         <fieldset class="full owner-fields" ${clientId ? 'hidden disabled' : ''}>
           <label>Shoot owner name<input name="clientName" required maxlength="100" value="${e(task?.client_name)}"></label>
           <label>Owner mobile number<input name="clientPhone" type="tel" required maxlength="30" value="${e(task?.client_phone)}"></label>
@@ -1303,6 +1331,7 @@ function paymentForm(task, payment) {
     ${payment ? `<input type="hidden" name="id" value="${payment.id}">` : ''}
     <label>Amount received (₹)<input name="amount" type="number" min="0.01" max="${available / 100}" step="0.01" value="${payment ? payment.amount_paise / 100 : ''}" required></label>
     <label>Date received<input name="date" type="date" max="${today()}" value="${payment?.paid_on || today()}" required></label>
+    <label class="full">Payment category<input name="category" maxlength="100" value="${e(payment?.category || 'Shoot payment')}"></label>
     <label class="full">Reference or note (optional)<input name="note" maxlength="300" value="${e(payment?.note)}"></label>
   `, payment ? 'Save payment' : 'Record payment'));
 }
@@ -1573,6 +1602,7 @@ async function mutate(button, callback) {
 }
 
 const savedMessages = {
+  projects: 'Project saved.', 'projects/resource': 'Project resource saved.',
   'revenue/save': 'Allocations saved.',
   'footage/manager': 'Storage manager updated.', 'footage/submit': 'Verification submitted.', 'footage/review': 'Verification reviewed.',
   attendance: 'Shift ended.', 'attendance/period': 'Timer started.',
@@ -1628,6 +1658,10 @@ document.addEventListener('click', (event) => {
   const id = Number(button.dataset.id);
   const task = () => state.tasks.find((item) => item.id === id);
   if (snapshot === undefined && !['menu', 'sign-out', 'retry-dashboard'].includes(action)) return;
+  if (Object.hasOwn(projectViews.actions, action)) {
+    projectViews.actions[action](button, value, id);
+    return;
+  }
   if (Object.hasOwn(footageViews.actions, action)) {
     footageViews.actions[action](button, value, id);
     return;
@@ -1769,6 +1803,7 @@ document.addEventListener('click', (event) => {
     case 'request-work': requestForm(state.openWork.find((item) => item.id === id)); break;
     case 'record-payment': paymentForm(task()); break;
     case 'payment-due': paymentDueForm(task()); break;
+    case 'print-finance': window.print(); break;
     case 'finance-clear':
       financeMonth = '';
       render();
@@ -1874,6 +1909,16 @@ function toggleFields(element, shown) {
 
 document.addEventListener('change', (event) => {
   const input = event.target;
+  if (input.id === 'finance-year') {
+    if (input.value && !/^(19|[2-9]\d)\d{2}$/.test(input.value)) {
+      showToast('Enter a four-digit year.');
+      return;
+    }
+    financeMonth = input.value;
+    render();
+    document.querySelector('#finance-year')?.focus();
+    return;
+  }
   if (input.id === 'finance-month') {
     if (input.value && !/^\d{4}-(0[1-9]|1[0-2])$/.test(input.value)) {
       showToast('Enter a report month in YYYY-MM format.');
@@ -1888,6 +1933,18 @@ document.addEventListener('change', (event) => {
     checkedSite = input.value;
     locationCheck = '';
     document.querySelector('#gps-result').textContent = '';
+  }
+  if (input.id === 'client-search') {
+    clientSearch = input.value.trim();
+    render();
+    document.getElementById(input.id)?.focus();
+    return;
+  }
+  if (Object.hasOwn(projectViews.filters, input.id)) {
+    projectViews.filters[input.id](input.value);
+    render();
+    document.getElementById(input.id)?.focus();
+    return;
   }
   const filters = Object.hasOwn(operationsViews.filters, input.id) ? operationsViews.filters : hrViews?.filters;
   if (filters && Object.hasOwn(filters, input.id)) {
@@ -1929,7 +1986,15 @@ document.addEventListener('change', (event) => {
   if (input.name === 'shootFrom' && input.value && !form.elements.shootTo.value) {
     form.elements.shootTo.value = studioDateTimeInput(Date.parse(`${input.value}:00+05:30`) + 60 * 60_000);
   }
-  if (input.name === 'clientId') toggleFields(form.querySelector('.owner-fields'), !input.value);
+  if (input.name === 'clientId') {
+    toggleFields(form.querySelector('.owner-fields'), !input.value);
+    const select = form.elements.projectId;
+    select.closest('label').hidden = !input.value;
+    select.disabled = !input.value;
+    select.replaceChildren(new Option('No project', ''), ...state.projects.filter((item) => item.client_id === Number(input.value))
+      .map((item) => new Option(item.name, String(item.id))));
+    if (!input.value && form.elements.id?.value) select.disabled = false;
+  }
   if (input.name === 'assignment') {
     const direct = input.value !== 'open';
     form.querySelector('.assignee').hidden = !direct;

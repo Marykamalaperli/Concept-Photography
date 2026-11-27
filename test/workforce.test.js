@@ -14,7 +14,7 @@ import { hashPassword } from '../lib/accounts.js';
 import { mapsLocation } from '../lib/maps.js';
 import { refreshReminders } from '../lib/reminders.js';
 import { createMobilePush } from '../lib/mobile-push.js';
-import { financeCsv, financeReport, monthlyCashTrend } from '../public/finance-report.js';
+import { financeCsv, financeGroups, financeReport, monthlyCashTrend } from '../public/finance-report.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
 
@@ -556,4 +556,25 @@ test('calendar events use stable identifiers, UTC times, and safe UTF-8 line fol
   assert.equal(calendar.split('\r\n').filter((line) => line === 'END:VEVENT').length, 1);
   assert.ok(calendar.split('\r\n').every((line) => Buffer.byteLength(line) <= 75));
   assert.equal(calendar.endsWith('END:VCALENDAR\r\n'), true);
+});
+
+
+test('annual reports and finance breakdowns count every receipt and expense once in each grouping', () => {
+  const state = {
+    tasks: [{ id: 1, title: 'Shoot', category: 'Photo shoot', client_name: 'Client', project_id: 12,
+      income_paise: 500, start_at: dayStart('2026-10-18') }],
+    payments: [{ task_id: 1, amount_paise: 101, paid_on: '2026-10-20', category: 'Deposit' },
+      { task_id: 1, amount_paise: 122, paid_on: '2026-12-10', category: 'Final balance' }],
+    expenses: [{ amount_paise: 12, spent_on: '2026-11-19', category: 'Travel' }, { amount_paise: 9, spent_on: '2025-11-11', category: 'Travel' }],
+  };
+  const result = financeReport(state, '2026', '2026-12-18', studioDay);
+  assert.equal(result.received, 223);
+  assert.equal(result.spent, 12);
+  assert.equal(result.net, 211);
+  const groups = Object.fromEntries(financeGroups(result, state.tasks, [{ id: 12, name: 'Project' }]));
+  assert.deepEqual(groups['Receipts by client'], [['Client', 223]]);
+  assert.deepEqual(groups['Receipts by project'], [['Project', 223]]);
+  assert.deepEqual(groups['Receipts by category'], [['Final balance', 122], ['Deposit', 101]]);
+  assert.deepEqual(groups['Expenses by category'], [['Travel', 12]]);
+  assert.match(financeCsv(result, '2026', state.tasks), /Final balance/);
 });

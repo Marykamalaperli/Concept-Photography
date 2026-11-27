@@ -91,6 +91,24 @@ test('private uploads enforce scope, protect completion evidence and restore ori
   assert.equal((await api(path, { method: 'DELETE', headers: { cookie: staff } })).status, 409);
   assert.equal((await json('operations/completion', manager, { taskId: 1, decision: 'approve' })).status, 200);
   const loose = await (await upload('client', manager)).json();
+  const projectResponse = await json('projects', manager, { clientId: 1, name: 'Private client project', category: 'Portrait' });
+  assert.equal(projectResponse.status, 200);
+  const project = await projectResponse.json();
+  const bookingResponse = await json('tasks', manager, {
+    title: 'Assigned project shoot', category: 'Photo shoot', employeeId: 2, location: 'Studio', latitude: 17.38, longitude: 78.48,
+    startAt: new Date(Date.now() + 48 * 3_600_000).toISOString(), endAt: new Date(Date.now() + 49 * 3_600_000).toISOString(),
+    income: '100', clientId: 1, projectId: project.id,
+  });
+  assert.equal(bookingResponse.status, 200);
+  assert.equal((await api('files/' + loose.id, { headers: { cookie: staff } })).status, 404);
+  const share = await json('projects/resource', manager, { projectId: project.id, kind: 'document', title: 'Proof', fileId: loose.id });
+  assert.equal(share.status, 200);
+  assert.equal((await api('files/' + loose.id, { headers: { cookie: staff } })).status, 200);
+  assert.equal((await api('files/' + loose.id, { headers: { cookie: stranger } })).status, 404);
+  assert.equal((await api('files?kind=client&record=1', { headers: { cookie: staff } })).status, 404);
+  assert.equal((await api('files/' + loose.id, { method: 'DELETE', headers: { cookie: manager } })).status, 409);
+  assert.equal((await json('projects/resource', manager, { projectId: project.id, id: (await share.json()).id, remove: true })).status, 200);
+  assert.equal((await api('files/' + loose.id, { headers: { cookie: staff } })).status, 404);
   assert.equal((await api('files/' + loose.id, { method: 'DELETE', headers: { cookie: manager } })).status, 200);
   assert.equal((await api('files/' + loose.id, { headers: { cookie: manager } })).status, 404);
   const backup = await createBackup(source, join(folder, 'backups'), 30, directory);

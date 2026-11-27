@@ -364,3 +364,11 @@ table .tag{white-space:nowrap}
 .footage-fields dt{color:var(--muted);font-size:.82rem}
 .footage-fields dd{margin:2px 0 0;overflow-wrap:anywhere}
 .form-grid .check-row{display:flex;align-items:center;gap:7px;min-height:34px}
+.finance-breakdowns{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,19rem),1fr));gap:14px}
+@media print{
+  body:has(#finance-print) :is(#sidebar,#topbar,.finance-toolbar,.page-head button,.finance-actions,table button){display:none!important}
+  body:has(#finance-print) main{margin:0;padding:0}
+  #finance-print .panel{box-shadow:none}
+  #finance-print .table-wrap{overflow:visible}
+  #finance-print :is(th,td){white-space:normal;padding:5px;font-size:9pt}
+}

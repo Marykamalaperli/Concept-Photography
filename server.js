@@ -57,6 +57,7 @@ const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/access.css', ['public/access.css', 'text/css']],
   ['/styles.css', ['public/styles.css', 'text/css']],
+  ['/projects-views.js', ['public/projects-views.js', 'text/javascript']],
   ['/revenue-views.js', ['public/revenue-views.js', 'text/javascript']],
   ['/footage-views.js', ['public/footage-views.js', 'text/javascript']],
   ['/worksheet-views.js', ['public/worksheet-views.js', 'text/javascript']],
