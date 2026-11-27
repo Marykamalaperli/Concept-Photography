@@ -96,6 +96,21 @@ test('private uploads enforce scope, protect completion evidence and restore ori
   const projectResponse = await json('projects', manager, { clientId: 1, name: 'Private client project', category: 'Portrait' });
   assert.equal(projectResponse.status, 200);
   const project = await projectResponse.json();
+  const editResponse = await json('tasks', manager, { category: 'Editing', title: 'Project revision', location: 'Studio',
+    projectId: project.id, employeeId: 2, unscheduled: true, estimate: 30 });
+  assert.equal(editResponse.status, 200);
+  const reviewTask = await editResponse.json();
+  const reviewFile = await (await upload('task', staff, fileBytes, {}, reviewTask.id)).json();
+  for (const action of ['acknowledge', 'start', 'submit-completion']) {
+    assert.equal((await json('task-action', staff, { taskId: reviewTask.id, action, report: 'Private project evidence', fileId: reviewFile.id })).status, 200);
+  }
+  assert.equal((await json('roles/assign', manager, { employeeId: 3, role: 'Studio Assistant' })).status, 200);
+  assert.equal((await json('roles', manager, { role: 'Studio Assistant', permissions: ['review-tasks'] })).status, 200);
+  assert.equal((await api('files/' + reviewFile.id, { headers: { cookie: stranger } })).status, 404);
+  assert.equal((await json('scopes', manager, { kind: 'project', employeeId: 3, recordId: project.id, enabled: true })).status, 200);
+  assert.equal((await api('files/' + reviewFile.id, { headers: { cookie: stranger } })).status, 200);
+  assert.equal((await json('scopes', manager, { kind: 'project', employeeId: 3, recordId: project.id, enabled: false })).status, 200);
+  assert.equal((await api('files/' + reviewFile.id, { headers: { cookie: stranger } })).status, 404);
   const shootStart = Date.now() + 48 * 3_600_000;
   const bookingResponse = await json('tasks', manager, {
     title: 'Assigned project shoot', category: 'Photo shoot', employeeId: 2, location: 'Studio', latitude: 17.38, longitude: 78.48,

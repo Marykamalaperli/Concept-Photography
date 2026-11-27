@@ -538,7 +538,8 @@ test('delegated business permissions are limited to their record scope and revok
   const scopedClient = await manager('clients', { name: 'Assigned customer', phone: '9000000001' });
   const otherClient = await manager('clients', { name: 'Other customer', phone: '9000000002' });
   const otherProject = await manager('projects', { clientId: otherClient.id, name: 'Unrelated project', category: 'Portrait' });
-  const selected = ['create-clients', 'edit-clients', 'manage-clients', 'create-projects', 'edit-projects', 'schedule-shoots', 'assign-tasks', 'manage-resources'];
+  const selected = ['create-clients', 'edit-clients', 'manage-clients', 'create-projects', 'edit-projects', 'schedule-shoots', 'assign-tasks',
+    'manage-resources', 'review-tasks'];
   await manager('roles/assign', { employeeId: 2, role: 'Video Editor' });
   await manager('roles', { role: 'Video Editor', permissions: selected });
   assert.equal((await staff('scoped-work')).clients.length, 0);
@@ -561,7 +562,7 @@ test('delegated business permissions are limited to their record scope and revok
   await assert.rejects(other('tasks', shoot), { status: 403 });
   const created = await staff('tasks', shoot);
   assert.equal(Object.hasOwn(created, 'income_paise'), false);
-  await staff('tasks', { title: 'Select images', category: 'Editing', location: 'Studio', employeeId: 3,
+  const edit = await staff('tasks', { title: 'Select images', category: 'Editing', location: 'Studio', employeeId: 3,
     projectId: project.id, delegated: true, unscheduled: true, estimate: 40 });
   await staff('projects/resource', { projectId: project.id, kind: 'reference', title: 'Brief', url: 'https://example.invalid' });
   assert.equal(Object.hasOwn(await staff('projects/detail', { id: project.id }), 'payments'), false);
@@ -569,7 +570,13 @@ test('delegated business permissions are limited to their record scope and revok
   await manager('roles', { role: 'Video Editor', permissions: [...selected, 'view-project-reports', 'assign-crew'] });
   assert.ok(Array.isArray((await staff('projects/detail', { id: project.id })).payments));
   await assert.rejects(staff('payments', { taskId: created.id, amount: '100' }), { status: 403 });
+  await other('task-action', { taskId: edit.id, action: 'acknowledge' });
+  await other('task-action', { taskId: edit.id, action: 'start' });
+  await other('task-action', { taskId: edit.id, action: 'submit-completion', report: 'Review the scoped evidence.' });
+  assert.equal((await staff('reviews')).completions[0].id, edit.id);
   await manager('scopes', { kind: 'client', employeeId: 2, recordId: scopedClient.id, enabled: false, reason: 'Project handed over' });
+  assert.equal((await staff('reviews')).completions.length, 0);
+  await assert.rejects(staff('operations/completion', { taskId: edit.id, decision: 'approve' }), { status: 404 });
   // The employee still has crew access to the shoot they scheduled for themselves.
   assert.equal(Object.hasOwn(await staff('projects/detail', { id: project.id }), 'payments'), false);
   await assert.rejects(staff('projects', { id: project.id, name: 'No longer editable', category: 'Wedding' }), { status: 403 });

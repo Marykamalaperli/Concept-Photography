@@ -8,6 +8,7 @@
 | Lucide Static | Self-served icons | ISC | None |
 | esbuild | Builds the optional public launcher | MIT | None |
 | Lighthouse via npm | Development and CI performance audit | Apache-2.0 | None for local use |
+| axe-core and Chromium | Development accessibility, interaction and timing checks | axe-core MPL-2.0 and Chromium component licenses | None. These checks ran outside the application's dependency tree. |
 | GitHub repository, Actions and optional Pages | Version control, review, test runners and static launcher | GitHub plan and usage limits | GitHub account for write operations, usage should stay within its plan |
 | Web Push library and browser endpoint | Optional delivery to registered devices when the workspace is closed | web-push MPL-2.0, delivery subject to browser service terms | No paid provider account, browser delivery infrastructure required for this option |
 | Google Maps links | Optional convenience for pin import and map navigation | Google Maps public links and terms | No required key, direct coordinates work independently |

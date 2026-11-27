@@ -454,7 +454,7 @@ function locationCell(serialized) {
 
 function attendanceTable(records, full = false) {
   if (!records.length) return empty('No attendance records yet.');
-  return `<div class="table-wrap" tabindex="0" aria-label="Attendance records"><table><thead><tr>
+  return `<div class="table-wrap" tabindex="0" aria-label="Attendance records"><table><caption class="sr-only">Attendance records</caption><thead><tr>
     <th scope="col">Employee</th><th scope="col">Clock in</th><th scope="col">Clock out</th>
     <th scope="col">${full ? 'Clock-in location' : 'Location'}</th>${full ? '<th scope="col">Clock-out location</th>' : ''}
     <th scope="col">${full ? 'Time worked' : 'Status'}</th>
@@ -476,7 +476,7 @@ function attendanceTable(records, full = false) {
 
 
 function table(caption, columns, rows) {
-  return `<div class="table-wrap" tabindex="0" aria-label="${caption}"><table><thead><tr>
+  return `<div class="table-wrap" tabindex="0" aria-label="${caption}"><table><caption class="sr-only">${caption}</caption><thead><tr>
     ${columns.map((label) => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows.map((row) =>
     `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
@@ -1564,6 +1564,10 @@ function taskForm(task, type = 'all', sourceShoot = null) {
       <p class="field-note" id="shoot-time-help">The work can end the next day and run for up to 24 hours.</p>
     </fieldset>
     <fieldset class="full task-time-fields" ${isShoot || parentShootId ? 'hidden disabled' : ''}>
+      ${manager() && !parentShootId && state.projects.length ? `<label class="full">Project (optional)<select name="taskProjectId">
+        <option value="">No project</option>${state.projects.map((item) =>
+          `<option value="${item.id}" ${item.id === task?.project_id ? 'selected' : ''}>${e(item.name)} · ${e(item.client_name)}</option>`).join('')}
+      </select></label>` : ''}
       ${manager() && !parentShootId && (!task || task.is_unscheduled) ? `<label class="full check-row"><input type="checkbox" name="unscheduled"
         ${task?.is_unscheduled ? 'checked' : ''}> Assign without a scheduled start</label>` : ''}
       <fieldset class="full form-grid task-planned-time" ${task?.is_unscheduled ? 'hidden disabled' : ''}>
@@ -2585,6 +2589,10 @@ document.addEventListener('submit', (event) => {
   }
   if (kind === 'operations/task-change' && data.kind === 'reschedule') data.start = `${data.proposedDateTime}:00+05:30`;
   if (kind === 'tasks') {
+    if (Object.hasOwn(data, 'taskProjectId')) {
+      data.projectId = data.taskProjectId;
+      delete data.taskProjectId;
+    }
     data.emergency = fields.has('emergency');
     data.unscheduled = data.category !== 'Photo shoot' && fields.has('unscheduled');
     if (data.category === 'Photo shoot' || data.parentShootId) {
