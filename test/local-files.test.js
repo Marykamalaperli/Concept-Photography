@@ -94,9 +94,10 @@ test('private uploads enforce scope, protect completion evidence and restore ori
   const projectResponse = await json('projects', manager, { clientId: 1, name: 'Private client project', category: 'Portrait' });
   assert.equal(projectResponse.status, 200);
   const project = await projectResponse.json();
+  const shootStart = Date.now() + 48 * 3_600_000;
   const bookingResponse = await json('tasks', manager, {
     title: 'Assigned project shoot', category: 'Photo shoot', employeeId: 2, location: 'Studio', latitude: 17.38, longitude: 78.48,
-    startAt: new Date(Date.now() + 48 * 3_600_000).toISOString(), endAt: new Date(Date.now() + 49 * 3_600_000).toISOString(),
+    startAt: new Date(shootStart).toISOString(), endAt: new Date(shootStart + 3_600_000).toISOString(),
     income: '100', clientId: 1, projectId: project.id,
   });
   assert.equal(bookingResponse.status, 200);

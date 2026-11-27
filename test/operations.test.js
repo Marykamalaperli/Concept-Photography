@@ -323,3 +323,62 @@ test('project access, client categories and financial history follow project ass
   assert.deepEqual(adminDetails.participants.map((row) => row.employee_id), [2]);
   await assert.rejects(other('projects/detail', { id: project.id }), { status: 404 });
 });
+
+test('delegated review grants are scoped, audited and revoked on the next request', async (t) => {
+  const { manager, staff, other } = await fixture(t);
+  const draft = await staff('operations/plan', { date: future, entries: [planned('Edited draft')] });
+  await staff('operations/submit-plan', { id: draft.id });
+  await assert.rejects(other('reviews'), { status: 403 });
+  await assert.rejects(other('roles', { role: 'Photographer', permissions: ['review-plans'] }), { status: 403 });
+  await assert.rejects(manager('roles', { role: 'Photographer', permissions: ['manage-finances'] }), { status: 400 });
+  await manager('roles/assign', { employeeId: 3, role: 'Photographer' });
+  await manager('roles', { role: 'Photographer', permissions: ['review-plans'] });
+  const queue = await other('reviews');
+  assert.equal(queue.plans[0].id, draft.id);
+  assert.deepEqual(queue.requests, []);
+  assert.deepEqual(queue.storage, []);
+  assert.deepEqual((await other('session')).actor.permissions, ['review-plans']);
+  await assert.rejects(other('worksheet', { employeeId: 2, date: studioDay(Date.now()), period: 'day' }), { status: 403 });
+  await assert.rejects(other('operations/audit'), { status: 403 });
+  assert.equal(Object.hasOwn(await other('state'), 'payments'), false);
+  const own = await other('operations/plan', { date: future, entries: [planned('Own request')] });
+  await other('operations/submit-plan', { id: own.id });
+  assert.equal((await other('reviews')).plans.length, 1);
+  await assert.rejects(other('operations/review-plan', { id: own.id, decision: 'approved' }), { status: 403 });
+  await other('operations/review-plan', { id: draft.id, decision: 'approved' });
+  assert.equal((await staff('state')).plans[0].status, 'approved');
+  assert.equal((await other('reviews')).plans.length, 0);
+  await manager('roles', { role: 'Photographer', permissions: [] });
+  await assert.rejects(other('reviews'), { status: 403 });
+  assert.ok((await manager('operations/audit')).some((row) => row.subject === 'roles'));
+});
+
+test('offline departures reconcile once and preserve conflicting attendance evidence', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-27T14:00:00+05:30') });
+  const { db, manager, staff, other } = await fixture(t);
+  const now = Date.now();
+  const first = await db.get(`
+    INSERT INTO attendance(employee_id, clock_in, in_location, site, last_verified_at)
+    VALUES (2, ?, '{}', '{}', ?) RETURNING id
+  `, now - 60 * minute, now - 20 * minute);
+  const request = { shiftId: first.id, requestId: '12345678-aaaa-bbbb-cccc-abcdef000001', reportedAt: now - 5 * minute };
+  await assert.rejects(other('attendance/offline-departure', request), { status: 404 });
+  const result = await staff('attendance/offline-departure', request);
+  assert.equal(result.status, 'reported');
+  assert.deepEqual(await staff('attendance/offline-departure', request), result);
+  const recorded = await db.get('SELECT * FROM attendance WHERE id = ?', first.id);
+  assert.equal(recorded.clock_out, request.reportedAt);
+  assert.equal(recorded.out_reason, 'offline-reported');
+  assert.equal(recorded.out_location, null);
+  assert.equal((await staff('state')).shiftReviews[0].location_unverified, 1);
+  const next = await db.get(`
+    INSERT INTO attendance(employee_id, clock_in, in_location, site, last_verified_at)
+    VALUES (2, ?, '{}', '{}', ?) RETURNING id
+  `, now - 4 * minute, now);
+  const conflict = await staff('attendance/offline-departure', {
+    shiftId: next.id, requestId: '12345678-aaaa-bbbb-cccc-abcdef000002', reportedAt: now - minute,
+  });
+  assert.equal(conflict.status, 'conflict');
+  assert.equal((await db.get('SELECT clock_out FROM attendance WHERE id = ?', next.id)).clock_out, null);
+  assert.ok((await manager('state')).operationNotices.some((row) => row.title === 'Offline departure conflicts with attendance'));
+});

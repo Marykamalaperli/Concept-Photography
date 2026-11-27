@@ -1,3 +1,5 @@
+import { installOfflineAttendanceSchema } from './lib/offline-attendance.js';
+import { installDelegationSchema } from './lib/delegation.js';
 import { installProjectSchema } from './lib/projects.js';
 import { installOperationsSchema } from './lib/operations-schema.js';
 import { installRevenueSchema } from './lib/revenue.js';
@@ -334,5 +336,7 @@ export function openStore(db) {
   if (db.prepare('PRAGMA user_version').get().user_version < 14) installFootageSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 15) installRevenueSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 16) installProjectSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 17) installDelegationSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 18) installOfflineAttendanceSchema(db);
   return db;
 }

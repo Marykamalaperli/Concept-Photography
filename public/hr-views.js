@@ -66,19 +66,19 @@ export function createHrViews(ui) {
       const leave = days.get(date);
       const employed = person.employment_start && date >= person.employment_start;
       const present = times.in != null || times.out != null;
-      const absent = !present && !off && employed && date < day(now) ? 1 - (leave?.units ?? 0) : 0;
+      const missing = !present && !off && employed && date < day(now) ? 1 - (leave?.units ?? 0) : 0;
       const officeStart = state().hrSettings.work_start;
       const late = times.in != null && times.in > Date.parse(`${date}T${officeStart}:00+05:30`) &&
         !off && records.some((record) => day(record.clock_in) === date && record.site && !JSON.parse(record.site).taskId);
       const status = present ? late ? tag('Late', 'sand') : tag('Present', 'sage') :
         leave ? tag('On leave', leave.unpaid ? 'sand' : 'sage') :
           off ? tag(state().holidays.some((holiday) => holiday.day === date) ? 'Holiday' : 'Week off', 'neutral') :
-            date === day(now) ? tag('Not in yet', 'neutral') : absent ? tag('Absent', 'peach') : tag('No record', 'neutral');
+            date === day(now) ? tag('Not in yet', 'neutral') : missing ? tag('Check-in missing', 'sand') : tag('No record', 'neutral');
       const work = new Set(personal(state().sessions, person.id)
         .filter((entry) => entry.start_at < dayStart(date) + dayLength && (entry.end_at ?? now) > dayStart(date))
         .map((entry) => entry.task_id));
       const logs = personal(state().workLogs, person.id).filter((entry) => entry.day === date).length;
-      return { date, times, correction, pending, status, off, leave, present, absent, work: work.size + logs };
+      return { date, times, correction, pending, status, off, leave, present, missing, work: work.size + logs };
     });
   }
 
@@ -95,7 +95,8 @@ export function createHrViews(ui) {
     const figures = [
       ['Days elapsed', days.length, 'neutral'],
       ['Present', days.filter((item) => item.present).length, 'sage'],
-      ['Unpaid', days.reduce((total, item) => total + item.absent + (item.leave?.unpaid ?? 0), 0), 'peach'],
+      ['Check-in missing', days.reduce((total, item) => total + item.missing, 0), 'sand'],
+      ['Unpaid leave', days.reduce((total, item) => total + (item.leave?.unpaid ?? 0), 0), 'peach'],
       ['Week-offs & holidays', days.filter((item) => item.off).length, 'neutral'],
       ['Leave taken', days.reduce((total, item) => total + (item.leave?.units ?? 0), 0), 'sand'],
     ];

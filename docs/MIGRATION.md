@@ -32,3 +32,7 @@ node .\scripts\database-backup.js verify C:\ConceptPrivate\workforce-cutover.sql
 The utility refuses to overwrite an existing destination. Point `DATABASE_PATH` at the verified file while the application is stopped. Set the local admin password, restart, and test employee access, calendar and notification setup, actual GPS and financial totals. Take a verified snapshot of the new database after testing.
 
 Keep the old site and database available for the rollback window. Switch users only after the new site is verified. Retire the old deployment and remove obsolete GitHub secrets `SUPABASE_ACCESS_TOKEN` and `SUPABASE_DB_PASSWORD` after the rollback period and after checking for other consumers of those secrets. Never commit exports, databases or backups.
+
+## Continuation tables
+
+Migrations 10–18 install the scheduling, attendance, attachment, footage, revenue, project, delegated access and offline departure tables. The legacy importer preserves exported records and their original IDs, counts and cash totals. Historical rows gain default values for new settings and optional fields. Workflows that did not exist in the source begin empty. In particular, importing a completed shoot does not generate a new footage-check assignment. Post-cutover backups include any private attachments created in the self-hosted workspace.

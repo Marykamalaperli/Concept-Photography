@@ -5,7 +5,7 @@ const numericFields = ['required', 'actual', 'remaining', 'overtime', 'office', 
 const fieldLabels = ['Required', 'Worked', 'Remaining', 'Overtime', 'Office', 'Shoot', 'Travel', 'Lunch', 'Personal', 'Away', 'Late', 'Early'];
 
 export function createWorksheetViews(ui) {
-  const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, applyAction, empty, table, today, day, time, duration } = ui;
+  const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, applyAction, empty, table, today, day, time, duration, money } = ui;
   let report;
   let filters;
   let version = 0;
@@ -51,6 +51,21 @@ export function createWorksheetViews(ui) {
       <section class="panel"><div class="panel-head"><div><h2>${e(report.employee.name)}</h2><p>${e(report.from)} to ${e(report.to)} · IST</p></div></div>
         <dl class="worksheet-totals"><div><dt>Worked</dt><dd>${duration(totals.worked)}</dd></div>
           <div><dt>Target</dt><dd>${duration(totals.target)}</dd></div><div><dt>Overtime</dt><dd>${duration(totals.overtime)}</dd></div></dl>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>Work performance</h2>
+          <p>Task comparisons exclude approved leave, shoot travel, GPS gaps and tasks subject to approval or revised timings.</p></div></div>
+        <dl class="footage-fields">
+          <div><dt>Completed tasks due in this period</dt><dd>${report.performance.completed} of ${report.performance.eligible}</dd></div>
+          <div><dt>Recorded work within scheduled time</dt><dd>${report.performance.recorded ?
+            Math.round(report.performance.within * 100 / report.performance.recorded) + '% across ' + report.performance.verifiedSchedules + ' tasks' : '—'}</dd></div>
+          <div><dt>Days with attendance recorded</dt><dd>${report.performance.attendanceDays}</dd></div>
+          <div><dt>Approved leave days</dt><dd>${report.performance.leaveDays}</dd></div>
+          <div><dt>Shoot participation</dt><dd>${report.performance.shoots}</dd></div>
+          <div><dt>Breaks recorded</dt><dd>${duration(report.performance.breaks)}</dd></div>
+          <div><dt>Official travel</dt><dd>${duration(report.performance.travel)}</dd></div>
+          <div><dt>Revenue contribution</dt><dd>${money(report.revenueContribution)}</dd></div>
+        </dl>
       </section>
       ${reportTable('Daily hours', ['Date', 'In', 'Out', ...fieldLabels], report.days.map((row) => [
         e(row.date), row.in == null ? '—' : time(row.in), row.out == null ? '—' : time(row.out),
@@ -144,7 +159,7 @@ export function createWorksheetViews(ui) {
       <label class="full">Review note<textarea name="note" maxlength="800" rows="4" required></textarea></label>`, 'Save decision')),
     'end-shift': (_button, _value, id) => openDialog('End shift', '', entryForm('attendance', `
       <input type="hidden" name="shiftId" value="${id}"><input type="hidden" name="action" value="end-shift">
-      <p class="full">This records your departure and stops automatic location monitoring. If GPS is unavailable or any hours or plans are missing, your administrator can review them.</p>`, 'End shift')),
+      <p class="full">This records your departure and stops location monitoring. If you’re offline, keep this tab open to send the report when you reconnect.</p>`, 'End shift')),
     'period-end': (button, _value, id) => applyAction(button, 'attendance/period', { id, action: 'end' }, 'Time recorded.'),
     'period-start': (_button, kind) => {
       const now = Date.now();

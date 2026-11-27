@@ -41,3 +41,28 @@ test('approved leave, holidays and time corrections apply without fabricating a 
   assert.equal(result.early, null);
   assert.equal(dailyHours({ ...input, holidays: [{ day: date }] }).required, 0);
 });
+
+test('performance compares eligible work and skips approval, GPS, travel and revised schedule exceptions', async () => {
+  const { summarizeWork } = await import('../lib/performance.js');
+  const tracked = { id: 1, title: 'Assigned editing', category: 'Editing', assigned: 1, start_at: at(9), estimate: 60,
+    work_state: 'ready', shoot_status: 'booked', completed_at: at(10) };
+  const task = (id, hour, extra = {}) => ({ ...tracked, id, start_at: at(hour), completed_at: null, ...extra });
+  const report = {
+    start: at(0), end: at(23), now: at(23), to: date,
+    days: [{ date, actual: 450 * minute, overtime: 0, lunch: 30 * minute, personal: 10 * minute, travel: 60 * minute, approvedLeave: 0, in: at(9) }],
+    tasks: [
+      tracked, task(2, 11, { pending_change: 1 }), task(3, 12), task(4, 13), task(5, 14, { schedule_changed: 1 }),
+      task(6, 15, { category: 'Photo shoot' }), task(7, 16),
+    ],
+    sessions: [{ task_id: 1, start_at: at(9, 30), end_at: at(10, 30) }],
+    gaps: [{ start_at: at(12, 10), resolved_at: at(12, 20) }],
+    periods: [{ kind: 'travel', start_at: at(13, 10), end_at: at(13, 20) }],
+  };
+  const result = summarizeWork(report);
+  assert.equal(result.completed, 1);
+  assert.equal(result.eligible, 2);
+  assert.equal(result.recorded, 60 * minute);
+  assert.equal(result.within, 30 * minute);
+  assert.equal(result.shoots, 1);
+  assert.equal(result.breaks, 40 * minute);
+});

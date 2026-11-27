@@ -372,3 +372,10 @@ table .tag{white-space:nowrap}
   #finance-print .table-wrap{overflow:visible}
   #finance-print :is(th,td){white-space:normal;padding:5px;font-size:9pt}
 }
+
+.connection-status{padding:4px 8px;border:1px solid var(--stroke);border-radius:6px;color:var(--muted);font-size:.8rem}
+.operation-stack>*{min-width:0}
+@media(max-width:530px){
+  .page-head{align-items:flex-start;flex-direction:column;gap:10px}
+  .page-head>.card-actions{justify-content:flex-start}
+}

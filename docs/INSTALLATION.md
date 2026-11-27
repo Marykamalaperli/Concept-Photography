@@ -88,3 +88,5 @@ Review the commit on GitHub, schedule downtime, take the proxy out of service, a
 The script backs up the database before checkout. Record its printed previous commit and backup path. An update that changes the schema may require switching to the verified backup when reverting the code. [Recovery procedure](OPERATIONS.md#backup-and-recovery)
 
 Once the office server and migrated data are verified, set the `WORKSPACE_URL` repository variable to the office HTTPS URL. In GitHub, use **Settings → Pages → GitHub Actions**. Run **Actions → Publish approved office launcher** on `main` and confirm the cutover in the workflow input. Recheck the destination, HTTPS, and sign-in before announcing the switch.
+
+For an installation with private attachments, review `FILE_STORAGE_DIRECTORY` and `FILE_RETENTION_DAYS` in [.env.example](../.env.example). Keep each backup and its adjacent `.files` folder together. Follow the [attachment recovery steps](OPERATIONS.md#private-attachments-and-recovery) when rehearsing a restore.

@@ -1,6 +1,7 @@
 import {
   additionalShootLocations, assignedTo, availableShoots, boundarySampleDelay, fenceRadius, maxAdditionalShootSites, maxFixAge, officeSites, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
+import { createReviewViews } from './review-views.js';
 import { createProjectViews } from './projects-views.js';
 import { createRevenueViews } from './revenue-views.js';
 import { createFootageViews } from './footage-views.js';
@@ -35,6 +36,7 @@ const adminNav = [
   ['projects', 'Projects', 'folder-open'],
   ['clients', 'Clients', 'contact-round'],
   ['approvals', 'Approvals', 'clipboard-check'],
+  ['reviews', 'Review queue', 'inbox'],
   ['finances', 'Finances', 'wallet'],
   ['attendance', 'Attendance', 'clock-3'],
   ['worksheet', 'Worksheets', 'notebook-pen'],
@@ -98,6 +100,8 @@ let readingLocation = false;
 let watcher;
 let lastFix;
 let observing = false;
+let offlineDeparture;
+let syncingDeparture = false;
 let shownShootIds = '';
 let mobileDevice;
 let checkedSite = '';
@@ -111,7 +115,7 @@ const e = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
 const icon = (name) => `<i class="icon" aria-hidden="true" style="--icon:url('./icons/${name}.svg')"></i>`;
 const tile = (name, color) => `<span class="tile ${color}">${icon(name)}</span>`;
 const employee = (id) => state.employees.find((person) => person.id === id);
-const actor = () => employee(actorId);
+const actor = () => state.actor ?? employee(actorId);
 const manager = () => Boolean(actor()?.is_admin);
 const latestShift = () => state.attendance.find((shift) => shift.employee_id === actorId);
 const checkInShoots = () => availableShoots(state.tasks.filter((task) => !task.is_open), actorId, Date.now(), state.hrSettings);
@@ -125,7 +129,8 @@ const day = (value) => dateKey.format(value);
 const today = () => day(Date.now());
 const tag = (label, color) => `<span class="tag ${color}"><span class="dot"></span>${label}</span>`;
 
-const nav = () => manager() ? adminNav : employeeNav;
+const nav = () => manager() ? adminNav : actor()?.permissions?.length ?
+  [...employeeNav, ['reviews', 'Review queue', 'inbox']] : employeeNav;
 const pendingRequests = () => [...state.requests, ...state.hrRequests].filter((item) => item.status === 'pending');
 const shoots = () => state.tasks.filter((task) => task.category === 'Photo shoot');
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
@@ -217,6 +222,7 @@ function renderChrome() {
       <strong>${section}</strong>
     </div>
     <div class="top-actions">
+      <span class="connection-status" aria-live="polite" ${navigator.onLine ? 'hidden' : ''}>Offline</span>
       <a href="#notifications" class="icon-button" aria-label="Notifications${unread ? `, ${unread} unread` : ''}">${icon('bell')}${unread ? '<span class="bell-dot"></span>' : ''}</a>
       <button type="button" class="profile profile-head btn secondary" aria-label="My profile" data-action="profile">${avatar(person)}
         <span><span class="profile-name">${e(person.name)}</span><span class="profile-role">${e(person.role)}</span></span></button>
@@ -350,8 +356,11 @@ function clockCard() {
           }).join('')}
         </select></label>` : ''}
       ${(shift || !sites.length) && boundSite ? `<p class="hr-clock-site">${icon('map-pin')}${e(boundSite.name)}</p>` : ''}
-      <div class="hr-clock-buttons">${clockButton('Check in', 'log-in', canClockIn)}${clockButton('Check out', 'log-out', canClockOut)}</div>
-      ${worksheetViews.clockDetails(shift, last)}
+      ${offlineDeparture ? `<p class="location-watch" role="status">${offlineDeparture.error ? e(offlineDeparture.error) :
+        'Departure queued. Keep this tab open. Your report will be sent when the connection returns.'}</p>
+        ${offlineDeparture.error ? actionButton('Discard queued request', 'discard-offline-departure', 'x', 'secondary') : ''}` :
+        `<div class="hr-clock-buttons">${clockButton('Check in', 'log-in', canClockIn)}${clockButton('Check out', 'log-out', canClockOut)}</div>
+        ${worksheetViews.clockDetails(shift, last)}`}
       ${officeHours ? `<p class="hr-muted">${officeHours}</p>` : ''}
       <p class="hr-muted">${canClockIn || canClockOut ? 'A verified GPS reading is required.' : 'No check-in site is available.'}</p>
       <p class="location-watch" data-location-watch role="status"></p>
@@ -387,7 +396,8 @@ function attendanceTable(records, full = false) {
       <td>${time(shift.clock_in)}<small>${shortDate.format(shift.clock_in)}${shift.in_reason === 'geofence' ? ' · Auto return' : ''}</small></td>
       <td>${shift.clock_out ? `${time(shift.clock_out)}<small>${shortDate.format(shift.clock_out)}${shift.out_reason === 'geofence' ? ' · Left site' :
         shift.out_reason === 'account-deactivated' ? ' · Account deactivated' :
-          shift.out_reason === 'employee-reported' ? ' · Employee reported' : ''}</small>` : '—'}</td>
+          shift.out_reason === 'employee-reported' ? ' · Employee reported' :
+          shift.out_reason === 'offline-reported' ? ' · Offline report' : ''}</small>` : '—'}</td>
       <td>${siteName ? `<strong>${e(siteName)}</strong><br>` : ''}${locationCell(shift.in_location)}</td>${full ? `<td>${locationCell(shift.out_location)}</td>` : ''}
       <td>${full && shift.clock_out ? duration(shift.clock_out - shift.clock_in) : shift.clock_out ? tag('Clocked out', 'neutral') : tag('Clocked in', 'sage')}
         ${gap ? `<small>${gap.resolved_at === null ? 'Location unverified since' : 'Location gap began at'} ${time(gap.start_at)} IST</small>` : ''}</td></tr>`;
@@ -419,9 +429,11 @@ function teamPage() {
     shiftFor(person.id) ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral'),
     state.tasks.filter((task) => assignedTo(task, person.id) && !task.completed_at && task.shoot_status === 'booked').length,
     `<div class="card-actions">${actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id)}
+      ${actionButton('Access role', 'assign-access-role', 'shield', 'secondary', person.id)}
       ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', person.id)}</div>`,
   ]);
   return `${heading('Employees', 'Manage profiles and sign-in credentials.', `<div class="card-actions">
+     ${actionButton('Role permissions', 'role-permissions', 'shield', 'secondary')}
     ${actionButton('Access history', 'access-audit', 'list', 'secondary')}${actionButton('Add employee', 'new-employee', 'user-plus')}</div>`)}
     <section class="panel">${rows.length ? table('Employee directory', ['Employee', 'Sign-in email', 'Mobile', 'Credentials', ...(state.calendarFeeds ? ['Calendar'] : []), 'Attendance', 'Open assignments', 'Actions'], rows) : empty('Add an employee to create their login and assign their first shoot.')}</section>`;
 }
@@ -824,6 +836,10 @@ const operationsViews = createOperationsViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today,
 });
 
+const reviewViews = createReviewViews({
+  actor, e, employee, heading, actionButton, openDialog, entryForm, empty, day, time, duration, request, mutate, render,
+});
+
 const projectViews = createProjectViews({
   state: () => state, manager, e, actionButton, heading, entryForm, openDialog, empty, table, day, time, money, applyAction, request, mutate,
 });
@@ -837,7 +853,7 @@ const footageViews = createFootageViews({
 });
 
 const worksheetViews = createWorksheetViews({
-  actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today, day, table, duration, render,
+  actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today, day, table, duration, money, render,
   availableTravel: () => shoots().filter((task) => assignedTo(task, actorId) && !task.completed_at && !task.is_open && task.shoot_status === 'booked'),
 });
 
@@ -858,7 +874,7 @@ function loadHrViews() {
 }
 
 const pages = {
-  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
+  dashboard, 'daily-plans': operationsViews.plansPage, footage: footageViews.page, revenue: revenueViews.page, projects: projectViews.page, worksheet: worksheetViews.page, reviews: reviewViews.page, team: teamPage, schedule: schedulePage, 'shoot-calendar': () => hrViews.shootCalendar(),
   'task-board': () => hrViews.taskBoard(), 'work-log': () => hrViews.workLog(), leave: () => hrViews.leave(), payroll: () => hrViews.payroll(),
   announcements: () => hrViews.announcements(), clients: clientsPage, approvals: approvalsPage,
   work: availableWorkPage, finances: financesPage, attendance: () => hrViews.attendance(), notifications: notificationsPage,
@@ -955,6 +971,8 @@ function clearWorkspace(info) {
   worksheetViews.reset();
   revenueViews.reset();
   projectViews.reset();
+  reviewViews.reset();
+  offlineDeparture = undefined;
   clientSearch = '';
   mobileMenu = false;
   if (dialog.open) dialog.close();
@@ -971,6 +989,7 @@ async function refresh({ force = false } = {}) {
   try {
     const [fresh] = await Promise.all([request('state'), loadHrViews()]);
     if (version !== refreshVersion) return;
+    if (JSON.stringify(actor()?.permissions ?? []) !== JSON.stringify(fresh.actor.permissions ?? [])) reviewViews.reset();
     session = { actor: fresh.actor };
     const fingerprint = JSON.stringify(fresh);
     if (snapshot === fingerprint && !force) return;
@@ -979,6 +998,11 @@ async function refresh({ force = false } = {}) {
     snapshot = fingerprint;
     state = { ...initialState(), ...fresh };
     actorId = fresh.actor.id;
+    if (page === 'reviews' && !nav().some(([key]) => key === page)) {
+      reviewViews.reset();
+      page = 'dashboard';
+      history.replaceState(null, '', location.pathname + '#dashboard');
+    }
     page = currentPage();
     render();
     if (!first) notifyReminders(reminders().filter((notice) => !notice.read_at && !oldIds.has(notice.task_id)));
@@ -1390,6 +1414,7 @@ function getLocation() {
 }
 
 function trackingTarget() {
+  if (offlineDeparture) return null;
   const latest = latestShift();
   const current = latest?.clock_out === null;
   const site = current
@@ -1604,6 +1629,7 @@ async function mutate(button, callback) {
 const savedMessages = {
   projects: 'Project saved.', 'projects/resource': 'Project resource saved.',
   'revenue/save': 'Allocations saved.',
+  roles: 'Role permissions saved.', 'roles/assign': 'Access role saved.', 'hr/review': 'Request reviewed.',
   'footage/manager': 'Storage manager updated.', 'footage/submit': 'Verification submitted.', 'footage/review': 'Verification reviewed.',
   attendance: 'Shift ended.', 'attendance/period': 'Timer started.',
   'attendance/review-shift': 'Shift review saved.', 'worksheet/remark': 'Remark saved.',
@@ -1637,6 +1663,36 @@ function clockAction(button, taskId) {
   });
 }
 
+async function syncOfflineDeparture() {
+  if (!offlineDeparture || offlineDeparture.error || syncingDeparture || pending || !actor() || !navigator.onLine) return;
+  const job = offlineDeparture;
+  syncingDeparture = true;
+  try {
+    const result = await request('attendance/offline-departure', job.command);
+    if (offlineDeparture !== job) return;
+    offlineDeparture = undefined;
+    showToast(result.status === 'conflict' ? 'Departure sent for review. The attendance record had already changed.' :
+      'Departure sent for review with GPS unverified.');
+    await refreshAfterSave();
+  } catch (error) {
+    if (offlineDeparture === job && error.status >= 400 && error.status < 500 && error.status !== 429) {
+      job.error = error.message;
+      render();
+    }
+  } finally {
+    syncingDeparture = false;
+  }
+}
+
+function connectivityChanged() {
+  const label = document.querySelector('.connection-status');
+  if (label) label.hidden = navigator.onLine;
+  if (navigator.onLine) {
+    if (offlineDeparture) syncOfflineDeparture();
+    else restartLocationTracking();
+  } else updateTracking();
+}
+
 function applyAction(button, path, body, message, close = false) {
   mutate(button, async () => {
     await request(path, body);
@@ -1658,6 +1714,10 @@ document.addEventListener('click', (event) => {
   const id = Number(button.dataset.id);
   const task = () => state.tasks.find((item) => item.id === id);
   if (snapshot === undefined && !['menu', 'sign-out', 'retry-dashboard'].includes(action)) return;
+  if (Object.hasOwn(reviewViews.actions, action)) {
+    reviewViews.actions[action](button, value, id);
+    return;
+  }
   if (Object.hasOwn(projectViews.actions, action)) {
     projectViews.actions[action](button, value, id);
     return;
@@ -1691,6 +1751,10 @@ document.addEventListener('click', (event) => {
       break;
     case 'allocate-revenue':
       mutate(button, async () => revenueViews.allocationForm(await request('revenue/allocations', { shootId: id })));
+      break;
+    case 'discard-offline-departure':
+      offlineDeparture = undefined;
+      render();
       break;
     case 'operations-audit':
       mutate(button, async () => {
@@ -1960,6 +2024,11 @@ document.addEventListener('change', (event) => {
     main.querySelector('#schedule-employee')?.focus();
   }
   const form = input.form;
+  if (input.id === 'permission-role') {
+    const role = input.value;
+    mutate(input, async () => reviewViews.roleSettings(await request('roles'), role));
+    return;
+  }
   if (input.matches('[data-task-change-kind]')) {
     form.querySelectorAll('[data-change-field]').forEach((field) => {
       field.hidden = field.dataset.changeField !== input.value;
@@ -2030,8 +2099,16 @@ document.addEventListener('submit', (event) => {
   errorNote.hidden = true;
   const fields = new FormData(form);
   const data = Object.fromEntries(fields);
+  if (kind === 'attendance' && data.action === 'end-shift' && !navigator.onLine) {
+    offlineDeparture = { command: { requestId: crypto.randomUUID(), shiftId: Number(data.shiftId), reportedAt: Date.now() } };
+    if (dialog.open) dialog.close();
+    stopTracking();
+    render();
+    return;
+  }
   if (kind === 'attendance' && data.action === 'end-shift' && watcher?.employeeId === actorId &&
       watcher.fix?.capturedAt >= Date.now() - maxFixAge) data.location = watcher.fix;
+  if (kind === 'roles') data.permissions = fields.getAll('permission');
   if (kind === 'revenue/save') {
     const staff = fields.getAll('allocationEmployee');
     const types = fields.getAll('allocationType');
@@ -2127,6 +2204,7 @@ document.addEventListener('submit', (event) => {
       }
       showToast(data.action === 'submit-completion' ? 'Work submitted for review.' : savedMessages[kind]);
       await refreshAfterSave();
+      if (page === 'reviews') await reviewViews.load();
       if (page === 'worksheet' && (kind === 'worksheet/remark' || kind === 'attendance/review-shift')) {
         await worksheetViews.load(worksheetViews.scope(), request);
       }
@@ -2171,10 +2249,11 @@ export function startWorkspace({ restore } = {}) {
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) restartLocationTracking();
   });
-  window.addEventListener('online', restartLocationTracking);
-  window.addEventListener('offline', updateTracking);
+  window.addEventListener('online', connectivityChanged);
+  window.addEventListener('offline', connectivityChanged);
   setInterval(tick, 1000);
   setInterval(() => {
-    if (!pending && !observing && session?.actor) refresh().catch(() => {});
+    if (offlineDeparture) syncOfflineDeparture();
+    if (!pending && !observing && session?.actor && navigator.onLine) refresh().catch(() => {});
   }, 15000);
 }

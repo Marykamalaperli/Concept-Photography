@@ -44,3 +44,33 @@ The online backup uses SQLite’s snapshot API. Backup rotation only applies to 
 - **Health check fails**. Use the local URL first. Check the server output, `data/logs`, or Task Scheduler history, `.env`, and the database directory permissions. Then test the proxy’s HTTPS address.
 - **Calendar events lag**. Check that the calendar device can reach the office hostname and that its subscription is active. Calendar providers refresh on their own schedules.
 - **Backups are missing**. Check the Windows backup task’s result, writable destination and free storage. Run a manual backup and verify the result before retrying the task.
+
+## Daily plans, attendance and worksheets
+
+- Employees prepare the next working day in **Daily plans** and submit it by 6:00 PM IST or before explicitly ending the shift. Holidays, the weekly day off, and approved full-day leave determine the next working day. An administrator approves the plan before it creates tasks. Use a revision before work starts and individual change requests afterwards.
+- Company location accepts the primary office and up to nine additional pins. Attendance settings define separate office and shoot radii and the maximum acceptable reported GPS accuracy. An automatic departure or return requires two consistent recent samples. Keep the browser open for reliable tracking.
+- The time clock supports timed lunch, personal breaks and assigned shoot travel. End shift can close attendance when GPS is unavailable. The recorded departure and any gaps, missing plan or hours shortfall go to the administrator in Approvals. Checkout and travel can also be used between locations. Employees should choose End shift when finishing the working day.
+- Worksheets use Asia/Kolkata dates. Daily totals omit recorded breaks and count assigned travel only once. Weekly reports run Monday–Sunday. CSV opens in Excel, and the print view can be saved as PDF. Historical totals use current rules and approved corrections. The shift review retains the hours recorded when a shift ended.
+
+## Projects, evidence and revenue
+
+- Create the client, then create a project for that client and select it when booking a shoot. Upload a private file through the client or project, then attach it as a project resource to share with assigned crew and editors. Employees can see resources for their assigned project. Client administration and payment totals require administrator access.
+- Set the Data Storage Manager under **Footage storage**. Select Sai's existing employee account when available. When a shoot is marked done, the system creates one verification. The assigned employee confirms transfer and storage, supplies drive and backup references and submits a PNG or JPEG screenshot. An administrator reviews the verification. Earlier completed shoots are outside automatic creation.
+- A completed shoot can have amount-based or percentage-based revenue allocations for its crew and editors. Percentages round down to whole paise. Clear allocations before changing the shoot value. Contribution reports use the completion date and closed shoot or editing sessions, and leave receipt and payroll totals separate.
+- Finance reports support monthly, yearly and all-time views, receipt and expense categories, client and project breakdowns, CSV and print/PDF. Cash profit always equals received payments minus expenses recorded in the report period.
+
+## Private attachments and recovery
+
+- The default file directory is beside the SQLite database, using the database filename followed by `.files`. To use a separate private drive, set `FILE_STORAGE_DIRECTORY` to a directory dedicated to this workspace and restrict its operating-system permissions to the service and backup accounts.
+- Uploads accept PNG, JPEG and PDF, with a 10 MB limit for work files and a 3 MB limit for profile photos. Downloads require a signed-in account with access to the record. Evidence and shared resources stay attached until the corresponding workflow permits unlinking.
+- Removing an attachment immediately revokes download access. Its disk copy expires after `FILE_RETENTION_DAYS` (30 by default). File deletion uses the filesystem and the backup retention schedule.
+- Each backup contains a verified SQLite snapshot and, if attachments exist, an adjacent directory named by appending `.files` to the snapshot filename. Keep the pair together. Backup and restore verify attachment sizes and SHA-256 checksums.
+- Run `node scripts/database-backup.js verify <backup.sqlite>` against the pair. Restore to a new SQLite file using the existing restore script. Its attachments restore into the new file’s adjacent `.files` directory. Point `DATABASE_PATH` and any custom `FILE_STORAGE_DIRECTORY` at the restored pair after verification.
+
+## Delegated review and offline attendance
+
+Open **Employees → Role permissions** to grant review permissions to an access role, and **Access role** on the employee’s row to assign it. Delegates use **Review queue** for daily plans, task changes and completions, attendance and leave, or footage. Permission changes apply on the employee’s next API request. Staff review permissions do not grant access to financial records, employee management or the general business audit.
+
+If the connection drops while an employee uses End shift, the loaded tab keeps that departure request in memory and pauses GPS monitoring. Keep the tab open until it confirms delivery. The server records it with GPS unverified and with a review requirement. If the shift has already changed, the server preserves the existing record and sends the issue to the administrator. Review the attendance and business audit before applying a time correction. Closing or reloading the tab clears an unsent request.
+
+The worksheet’s work performance panel shows facts from the selected employee and date period. A missing check-in is shown separately from approved unpaid leave. Task comparisons skip periods with confirmed leave, official travel, GPS verification gaps or task approvals and schedule changes.
