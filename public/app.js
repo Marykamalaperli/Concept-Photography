@@ -1,6 +1,6 @@
 import { createAuditViews } from './audit-views.js';
 import { businessLabels, createScopedViews } from './scoped-views.js';
-import { hasSavedDeparture, prepareDepartureStorage } from './offline-queue.js';
+import { hasSavedDeparture, offlineWorkForms, prepareDepartureStorage } from './offline-queue.js';
 import {
   additionalShootLocations, assignedTo, availableShoots, boundarySampleDelay, fenceRadius, maxAdditionalShootSites, maxFixAge, officeSites, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
@@ -80,7 +80,7 @@ const categories = {
 
 const initialState = () => ({
   hrSettings: { monthly_leave: 2, week_off: 0, required_minutes: 480, verification_grace_minutes: 5 },
-  projects: [], workPeriods: [], activeWorkPeriods: [], shiftReviews: [], footageChecks: [], revenueSummary: null,
+  projects: [], workPeriods: [], activeWorkPeriods: [], shiftReviews: [], footageChecks: [], revenueSummary: null, taskDrafts: [],
   plans: [], taskChanges: [], operationNotices: [], assignableStaff: [],
   holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [], attendanceGaps: [],
   office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
@@ -106,6 +106,9 @@ let watcher;
 let lastFix;
 let observing = false;
 let offlineDeparture;
+let profileNote;
+let workSync;
+const signOutMarker = 'concept-signout-pending';
 let offlineStorage;
 let offlineKeyCheck;
 let syncingDeparture = false;
@@ -590,6 +593,7 @@ function workControls(task) {
     ${icon(active ? 'pause' : 'play')}${active ? 'Pause timer' : 'Start timer'}</button>
     ${task.footage_id ? viewLink('footage', 'Open footage verification') : ''}
     ${!task.footage_id && sessionsFor(task).some((session) => session.employee_id === actorId) ? actionButton('Submit work for review', 'submit-completion', 'send', 'secondary', task.id) : ''}
+    ${!task.footage_id ? actionButton('Progress and draft', 'task-draft', 'pencil', 'secondary', task.id) : ''}
     ${!task.footage_id ? actionButton('Block task', 'block-task', 'octagon-alert', 'secondary', task.id) : ''}`;
 }
 
@@ -1008,7 +1012,7 @@ function render() {
     </section>`;
     return;
   }
-  main.innerHTML = pages[page]();
+  main.innerHTML = workQueueBanner() + pages[page]();
   if (page === 'notifications') prepareMobileAlerts();
   if (dialog.open && dialog.dataset.taskId) {
     const task = state.tasks.find((item) => item.id === Number(dialog.dataset.taskId));
@@ -1091,6 +1095,8 @@ function clearWorkspace(info) {
   offlineDeparture = undefined;
   offlineStorage = undefined;
   offlineKeyCheck = undefined;
+  profileNote = undefined;
+  workSync = undefined;
   clientSearch = '';
   mobileMenu = false;
   if (dialog.open) dialog.close();
@@ -1142,6 +1148,7 @@ async function refresh({ force = false } = {}) {
 
 export async function finishSignIn({ actor: person }) {
   sessionVersion++;
+  try { localStorage.removeItem(signOutMarker); } catch { /* The new session replaces the previous cookie. */ }
   history.replaceState(null, '', '#dashboard');
   if (!person) {
     await refresh({ force: true });
@@ -1186,6 +1193,7 @@ async function loadSession() {
 
 function openDialog(title, subtitle, body) {
   delete dialog.dataset.taskId;
+  delete dialog.dataset.workQueue;
   dialog.innerHTML = `<div class="dialog-inner"><div class="panel-head">
     <div><h2 id="dialog-title">${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ''}</div>
     <button type="button" class="icon-button" aria-label="Close dialog" data-action="close">${icon('x')}</button>
@@ -1199,12 +1207,122 @@ function entryForm(kind, fields, label, cancel = true) {
   </form>`;
 }
 
-function profileForm(note) {
+function profileForm({ note, version }) {
   openDialog('My profile', e(actor().email), `
     <div class="card-actions">${actionButton('Change password', 'change-password', 'key-round', 'secondary')}
     ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', actorId)}</div>
-    ${entryForm('profile/notes', `<label class="full">Private notepad<textarea name="note" rows="6" maxlength="6000">${e(note)}</textarea></label>`, 'Save notes')}
+    ${entryForm('profile/notes', `<input type="hidden" name="version" value="${version}">
+      <label class="full">Private notepad<textarea name="note" rows="6" maxlength="6000">${e(note)}</textarea></label>`, 'Save notes')}
   `);
+}
+
+function taskDraftForm(task) {
+  const draft = state.taskDrafts.find((item) => item.task_id === task.id);
+  openDialog('Progress and completion draft', e(task.title), entryForm('task-draft', `
+    <input type="hidden" name="taskId" value="${task.id}">
+    <input type="hidden" name="taskVersion" value="${task.work_revision}">
+    <input type="hidden" name="version" value="${draft?.version ?? 0}">
+    <p class="full">Your progress and draft are private. Use Submit work for review to send the final report.</p>
+    <label class="full">Progress update<textarea name="progress" rows="3" maxlength="2000">${e(draft?.progress)}</textarea></label>
+    <label class="full">Completion draft<textarea name="completion" rows="4" maxlength="1500">${e(draft?.completion)}</textarea></label>
+  `, 'Save progress and draft'));
+}
+
+function workQueueBanner() {
+  const jobs = offlineStorage?.work.list() ?? [];
+  if (!jobs.length) return '';
+  const conflicts = jobs.filter((job) => job.blocked).length;
+  return `<aside class="panel work-sync"><span role="status">${jobs.length} saved ${jobs.length === 1 ? 'update' : 'updates'} awaiting sync${conflicts ? ' · ' + conflicts + ' to review' : ''}</span>
+    ${actionButton('View saved updates', 'work-sync', 'refresh-cw', 'secondary')}</aside>`;
+}
+
+function workQueueDialog() {
+  const items = offlineStorage?.work.list() ?? [];
+  openDialog('Saved updates', 'Only this account can synchronize or reopen these encrypted updates.', items.length ? `<ul class="sync-list">${items.map((job) =>
+    `<li><strong>${e(studioDate.format(job.createdAt))} · ${e(time(job.createdAt))}</strong>
+      <p>${job.blocked ? 'This update could not be applied. Open it to recover your text before discarding it.' : 'Waiting to sync.'}</p>
+      <div class="card-actions">${job.blocked && navigator.onLine ? `<button type="button" class="btn secondary" data-action="recover-work"
+        data-value="${e(job.id)}">Open saved update</button>` : ''}
+        <button type="button" class="btn secondary" data-action="discard-work" data-value="${e(job.id)}">Discard update</button></div>
+    </li>`).join('')}</ul>` : empty('All saved updates have synchronized.'));
+  dialog.dataset.workQueue = 'true';
+}
+
+function recoveredText(path, data) {
+  if (path === 'profile/notes') return data.note;
+  if (path === 'task-draft') return [data.progress, data.completion].filter(Boolean).join('\n\n');
+  if (path === 'operations/plan') return [data.date, ...data.entries.map((entry) =>
+    entry.from + '–' + entry.to + ' · ' + entry.title + ' · ' + entry.category + ' · ' + entry.location), data.reason].filter(Boolean).join('\n');
+  if (path === 'hr/work-logs') return [data.day, data.minutes + ' minutes', data.note].join('\n');
+  return [data.from, data.to, data.clockIn, data.clockOut, data.leaveType, data.reason].filter(Boolean).join('\n');
+}
+
+async function sendWork(path, data) {
+  const storage = offlineStorage?.work;
+  const person = actorId;
+  const activeSession = sessionVersion;
+  if (!storage) {
+    if (!navigator.onLine) throw new Error('Connect to the workspace to prepare encrypted offline saving for this device.');
+    return request(path, data);
+  }
+  const job = await storage.seal(path, data, person);
+  if (activeSession !== sessionVersion) throw new Error('Open your workspace again before saving.');
+  let stored = false;
+  try {
+    storage.save(job);
+    stored = true;
+  } catch {
+    if (!navigator.onLine) throw new Error('This device could not save the encrypted update. Keep this form open until you reconnect.');
+  }
+  if (navigator.onLine) {
+    try {
+      const response = await request('offline/synchronize', job.envelope);
+      if (stored) storage.remove(job.id);
+      return response;
+    } catch (error) {
+      if (!stored || (error.status >= 400 && error.status < 500 && ![401, 429].includes(error.status))) {
+        if (stored) storage.remove(job.id);
+        throw error;
+      }
+    }
+  }
+  return { queued: true };
+}
+
+async function syncSavedWork() {
+  const storage = offlineStorage?.work;
+  if (!storage || !actor() || !navigator.onLine || workSync || pending) return;
+  const jobs = storage.list().filter((job) => !job.blocked);
+  if (!jobs.length) return;
+  const token = {};
+  workSync = token;
+  let changed = false;
+  let applied = 0;
+  try {
+    for (const job of jobs) {
+      if (workSync !== token || storage !== offlineStorage?.work || !navigator.onLine) break;
+      try {
+        await request('offline/synchronize', job.envelope);
+        storage.remove(job.id);
+        applied++;
+      } catch (error) {
+        if (!(error.status >= 400 && error.status < 500) || [401, 429].includes(error.status)) break;
+        storage.save({ ...job, blocked: true });
+      }
+      changed = true;
+    }
+    if (changed && workSync === token) {
+      if (applied) profileNote = undefined;
+      if (dialog.open && dialog.dataset.workQueue) workQueueDialog();
+      if (applied) await refreshAfterSave();
+      else render();
+      showToast(applied ? 'Saved updates synchronized.' : 'A saved update needs review.');
+    }
+  } catch {
+    // The server deduplicates any update the device could not remove.
+  } finally {
+    if (workSync === token) workSync = undefined;
+  }
 }
 
 async function fileRequest(path, method = 'GET', file) {
@@ -1774,6 +1892,7 @@ const savedMessages = {
   'hr/work-logs': 'Work logged.', 'task-action': 'Task blocked.', payments: 'Payment recorded.', expenses: 'Expense saved.',
   'payment-due': 'Payment due date saved.', 'request-decisions': 'Request approved.',
   'profile/notes': 'Notes saved.', 'employees/access': 'Account access updated.',
+  'task-draft': 'Progress and draft saved.',
 };
 
 function clockAction(button, taskId) {
@@ -1818,9 +1937,17 @@ async function prepareOfflineDeparture() {
   const check = { restoring: hasSavedDeparture() };
   offlineKeyCheck = check;
   try {
-    const storage = await prepareDepartureStorage(await request('attendance/offline-key'));
+    const [storage, note] = await Promise.all([
+      request('attendance/offline-key').then(prepareDepartureStorage),
+      request('profile').catch(() => undefined),
+    ]);
     if (offlineKeyCheck !== check) return;
     offlineStorage = storage;
+    profileNote = note;
+    if (storage.work.list().length) {
+      render();
+      syncSavedWork();
+    }
     const encrypted = storage.load();
     if (encrypted && !offlineDeparture) {
       offlineDeparture = { encrypted };
@@ -1865,10 +1992,28 @@ function connectivityChanged() {
   const label = document.querySelector('.connection-status');
   if (label) label.hidden = navigator.onLine;
   if (navigator.onLine) {
+    if (!actor()) finishDeferredSignOut();
     prepareOfflineDeparture();
+    syncSavedWork();
     if (offlineDeparture) syncOfflineDeparture();
     else restartLocationTracking();
   } else updateTracking();
+}
+
+function deferredSignOut() {
+  try { return localStorage.getItem(signOutMarker) === '1'; } catch { return false; }
+}
+
+async function finishDeferredSignOut() {
+  if (!deferredSignOut() || !navigator.onLine) return;
+  try {
+    const subscription = webPushEnabled ? await currentPushSubscription() : null;
+    await workspaceRequest('logout', { pushEndpoint: subscription?.endpoint });
+    if (subscription) await subscription.unsubscribe().catch(() => {});
+    localStorage.removeItem(signOutMarker);
+  } catch {
+    // Keep the workspace locked until the browser can revoke the old session.
+  }
 }
 
 function applyAction(button, path, body, message, close = false) {
@@ -1984,9 +2129,14 @@ document.addEventListener('click', (event) => {
       break;
     case 'sign-out':
       mutate(button, async () => {
-        const subscription = webPushEnabled ? await currentPushSubscription() : null;
-        await request('logout', { pushEndpoint: subscription?.endpoint });
-        if (subscription) await subscription.unsubscribe().catch(() => {});
+        try {
+          if (!navigator.onLine) throw new Error('Reconnect to sign out of the server.');
+          const subscription = webPushEnabled ? await currentPushSubscription() : null;
+          await request('logout', { pushEndpoint: subscription?.endpoint });
+          if (subscription) await subscription.unsubscribe().catch(() => {});
+        } catch (error) {
+          try { localStorage.setItem(signOutMarker, '1'); } catch { throw error; }
+        }
         history.replaceState(null, '', location.pathname);
         clearWorkspace({ actor: null });
       });
@@ -2003,7 +2153,33 @@ document.addEventListener('click', (event) => {
     }
     case 'edit-employee-access': accessForm(employee(id)); break;
     case 'profile':
-      mutate(button, async () => profileForm((await request('profile')).note));
+      mutate(button, async () => {
+        if (navigator.onLine) profileNote = await request('profile');
+        if (!profileNote) throw new Error('Open the notepad while connected to load your latest notes.');
+        profileForm(profileNote);
+      });
+      break;
+    case 'task-draft':
+      if (task()) taskDraftForm(task());
+      break;
+    case 'work-sync':
+      workQueueDialog();
+      break;
+    case 'discard-work':
+      if (confirm('Discard this saved update from the device?')) {
+        offlineStorage?.work.remove(value);
+        render();
+        workQueueDialog();
+      }
+      break;
+    case 'recover-work':
+      mutate(button, async () => {
+        const job = offlineStorage?.work.list().find((item) => item.id === value);
+        if (!job) return;
+        const { path, data } = await request('offline/recover', job.envelope);
+        openDialog('Recover saved update', 'Copy the text you need and reopen the latest record before applying your changes.',
+          `<label class="full">Saved text<textarea readonly rows="8">${e(recoveredText(path, data))}</textarea></label>`);
+      });
       break;
     case 'change-password': passwordForm(); break;
     case 'access-audit':
@@ -2359,7 +2535,10 @@ document.addEventListener('submit', (event) => {
     }
   }
   if (kind === 'operations/plan') {
-    const columns = ['entryTitle', 'entryFrom', 'entryTo', 'entryCategory', 'entryLocation'].map((key) => fields.getAll(key));
+    const columns = ['entryTitle', 'entryFrom', 'entryTo', 'entryCategory', 'entryLocation'].map((key) => {
+      delete data[key];
+      return fields.getAll(key);
+    });
     data.entries = columns[0].map((title, index) => ({
       title, from: columns[1][index], to: columns[2][index], category: columns[3][index], location: columns[4][index],
     }));
@@ -2428,7 +2607,14 @@ document.addEventListener('submit', (event) => {
         await worksheetViews.load(data, request);
         return;
       }
-      const result = await request(kind, data);
+      const result = offlineWorkForms.has(kind) ? await sendWork(kind, data) : await request(kind, data);
+      if (kind === 'profile/notes') profileNote = { note: data.note, version: result.queued ? Number(data.version) + 1 : result.version };
+      if (result?.queued) {
+        if (dialog.open && dialog.contains(form)) dialog.close();
+        render();
+        showToast('Saved to this device. Your update will sync after reconnecting.');
+        return;
+      }
       if (kind === 'login') {
         await finishSignIn(result);
         return;
@@ -2485,7 +2671,10 @@ window.addEventListener('hashchange', () => {
 });
 
 export function startWorkspace({ restore } = {}) {
-  if (restore) loadSession();
+  if (restore && deferredSignOut()) {
+    loginPage();
+    finishDeferredSignOut();
+  } else if (restore) loadSession();
   navigator.serviceWorker?.register('/push-worker.js').catch(() => {});
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') restartLocationTracking();
@@ -2495,9 +2684,13 @@ export function startWorkspace({ restore } = {}) {
   });
   window.addEventListener('online', connectivityChanged);
   window.addEventListener('offline', connectivityChanged);
+  window.addEventListener('storage', (event) => {
+    if (event.key === signOutMarker && event.newValue === '1' && actor()) clearWorkspace({ actor: null });
+  });
   setInterval(tick, 1000);
   setInterval(() => {
     if (offlineDeparture) syncOfflineDeparture();
+    syncSavedWork();
     prepareOfflineDeparture();
     if (!pending && !observing && session?.actor && navigator.onLine) refresh().catch(() => {});
   }, 15000);

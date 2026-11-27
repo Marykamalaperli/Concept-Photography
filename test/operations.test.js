@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { constants, createPublicKey, publicEncrypt } from 'node:crypto';
+import { constants, createPublicKey, publicEncrypt, webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { hashPassword } from '../lib/accounts.js';
@@ -112,6 +112,60 @@ test('dated work policies preserve prior worksheets and configured evidence is e
   assert.equal(row(await report('2026-11-28')).required, 360 * minute);
   await assert.rejects(manager('hr/settings', { weekOff: 0, monthlyLeave: 0, effectiveFrom: '2026-11-27' }), { status: 400 });
   await assert.rejects(staff('settings/history'), { status: 403 });
+});
+
+test('encrypted offline forms are private, idempotent and use live record versions', async (t) => {
+  const { db, manager, staff, other } = await fixture(t);
+  const { publicKey, accountBinding } = await staff('attendance/offline-key');
+  assert.notEqual(accountBinding, (await other('attendance/offline-key')).accountBinding);
+  const key = await webcrypto.subtle.importKey('spki', Buffer.from(publicKey, 'base64'),
+    { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['wrapKey']);
+  async function seal(path, data, employeeId = 2) {
+    const aes = await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
+    const iv = webcrypto.getRandomValues(new Uint8Array(12));
+    const plain = Buffer.from(JSON.stringify({ id: webcrypto.randomUUID(), createdAt: Date.now(), path, data, employeeId }));
+    const wrapped = await webcrypto.subtle.wrapKey('raw', aes, key, 'RSA-OAEP');
+    const encrypted = await webcrypto.subtle.encrypt({ name: 'AES-GCM', iv }, aes, plain);
+    return { wrappedKey: Buffer.from(wrapped).toString('base64'), ciphertext: Buffer.from(encrypted).toString('base64'), iv: Buffer.from(iv).toString('base64') };
+  }
+  const note = await seal('profile/notes', { note: 'Private offline text', version: 0 });
+  await assert.rejects(other('offline/synchronize', note), { status: 403 });
+  await assert.rejects(manager('offline/recover', note), { status: 403 });
+  const damaged = { ...note, ciphertext: (note.ciphertext.startsWith('A') ? 'B' : 'A') + note.ciphertext.slice(1) };
+  await assert.rejects(staff('offline/synchronize', damaged), { status: 400 });
+  const successful = await Promise.all([staff('offline/synchronize', note), staff('offline/synchronize', note)]);
+  assert.deepEqual(successful, [{ id: 2, version: 1 }, { id: 2, version: 1 }]);
+  const stale = await seal('profile/notes', { note: 'Stale text is recoverable', version: 0 });
+  await assert.rejects(staff('offline/synchronize', stale), { status: 409 });
+  assert.equal((await staff('offline/recover', stale)).data.note, 'Stale text is recoverable');
+  assert.equal((await staff('profile')).note, 'Private offline text');
+  assert.equal((await manager('profile')).note, '');
+
+  const when = studioDay(Date.now() - 2 * dayLength);
+  const log = await seal('hr/work-logs', { day: when, note: 'Colour reference checked', minutes: 20 });
+  await staff('offline/synchronize', log);
+  await staff('offline/synchronize', log);
+  assert.equal((await db.get('SELECT COUNT(*) AS total FROM work_logs')).total, 1);
+  const correction = await seal('hr/requests', { kind: 'time', from: when, clockIn: '09:00', reason: 'Verified by manager on site' });
+  await staff('offline/synchronize', correction);
+  assert.equal((await db.get('SELECT status FROM hr_requests')).status, 'pending');
+
+  const entries = [planned('Offline rehearsal draft')];
+  const draft = await staff('offline/synchronize', await seal('operations/plan', { date: future, version: 0, entries }));
+  assert.equal(draft.version, 1);
+  const draftEdit = await seal('operations/plan', { date: future, id: draft.id, version: 1, entries });
+  await staff('operations/plan', { date: future, id: draft.id, version: 1, entries: [planned('Newer draft')] });
+  await assert.rejects(staff('offline/synchronize', draftEdit), { status: 409 });
+
+  const task = await manager('tasks', { employeeId: 2, title: 'Edit draft', location: 'Studio', category: 'Editing', unscheduled: true, estimate: 30 });
+  const taskDraft = await seal('task-draft', { taskId: task.id, taskVersion: 1, version: 0, progress: 'First cut', completion: 'Draft report' });
+  await staff('offline/synchronize', taskDraft);
+  const state = await staff('state');
+  assert.equal(state.taskDrafts[0].completion, 'Draft report');
+  assert.equal((await manager('state')).taskDrafts.length, 0);
+  await db.run('UPDATE tasks SET title = ?, estimate = 45 WHERE id = ?', 'Changed assignment', task.id);
+  await assert.rejects(staff('offline/synchronize', await seal('task-draft', { taskId: task.id, taskVersion: 1, version: 1, completion: 'Stale' })), { status: 409 });
+  await assert.rejects(staff('offline/synchronize', await seal('payments', { amount: 100 })), { status: 400 });
 });
 
 test('an emergency shoot pauses only affected work and preserves timings through an approved reschedule', async (t) => {

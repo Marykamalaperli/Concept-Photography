@@ -149,9 +149,16 @@ button.profile-head{min-height:42px;text-align:left;padding:3px 7px;border-color
 .balance-list dd{margin:0;color:var(--ink);font-weight:750}
 .dashboard-queues div{align-items:baseline;gap:14px;padding:7px 0;border-bottom:1px solid var(--stroke)}
 .dashboard-queues div:last-child{border-bottom:0}
+.dashboard-queues dt{min-width:0}
+.dashboard-queues .text-link{white-space:normal;text-align:left}
+.dashboard-queues .text-link .icon{flex:none}
 .dashboard-queues dd{text-align:right;overflow-wrap:anywhere}
 .dashboard-queues .hr-title-button{text-align:right}
 .dashboard-names{margin:9px 0 0;color:var(--muted);font-size:12px}
+.work-sync{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.work-sync span,.sync-list p{color:var(--muted);font-size:13px}
+.sync-list{display:grid;gap:12px;padding:0;list-style:none;margin:0}
+.sync-list>li{padding:10px;border:1px solid var(--stroke);border-radius:8px}
 .net-panel{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:17px;background:#f2f6f0;border-color:#dce9df}
 .net-panel h2{font-size:16px}
 .net-panel p{color:var(--muted);font-size:12px;margin-top:4px}
