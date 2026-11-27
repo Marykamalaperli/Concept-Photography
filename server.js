@@ -57,6 +57,7 @@ const assets = new Map([
   ['/', ['public/index.html', 'text/html']],
   ['/access.css', ['public/access.css', 'text/css']],
   ['/styles.css', ['public/styles.css', 'text/css']],
+  ['/offline-queue.js', ['public/offline-queue.js', 'text/javascript']],
   ['/review-views.js', ['public/review-views.js', 'text/javascript']],
   ['/projects-views.js', ['public/projects-views.js', 'text/javascript']],
   ['/revenue-views.js', ['public/revenue-views.js', 'text/javascript']],

@@ -239,17 +239,22 @@ export function createHrViews(ui) {
     const now = Date.now();
     const tasks = boardTasks().filter((task) => !task.completed_at || now - task.completed_at < 14 * dayLength);
     const open = tasks.filter((task) => !task.completed_at);
-    const overdue = open.filter((task) => task.start_at + task.estimate * 60_000 < now).length;
+    const overdue = open.filter((task) => !task.is_unscheduled && task.work_state === 'ready' && task.start_at + task.estimate * 60_000 < now).length;
+    const next = !manager() && open.filter((task) => task.work_state === 'ready' && !task.blocked_reason && !activeSession(task))
+      .sort((a, b) => (b.priority - a.priority) || (a.is_unscheduled - b.is_unscheduled) || (a.start_at - b.start_at))[0];
     const actions = actionButton(manager() ? 'Assign task' : 'Add task', 'new-board-task', 'plus');
     return `${heading('Tasks', 'Manage your work from assignment to completion.', actions)}
       <div class="hr-toolbar">${manager() ? field('Show', `<select id="hr-task-filter">${options([['all', 'All employees'], ...employees()], taskFilter)}</select>`)
         : '<span>Assigned to me</span>'}<span class="hr-muted">${open.length} open · ${overdue} overdue</span></div>
+      ${next ? `<section class="panel next-work"><div><h2>Next available task</h2>
+        <p>${e(next.title)} · ${next.is_unscheduled ? 'Unscheduled' : dayLabel(day(next.start_at))}</p></div>
+        ${actionButton('Open task', 'details', 'arrow-right', 'secondary', next.id)}</section>` : ''}
       <div class="hr-board">${lanes.map(([key, title]) => {
         const items = tasks.filter((task) => taskStage(task) === key);
         return `<section class="hr-lane ${key}"><header><h2>${title}</h2><span>${items.length}</span></header>
           ${items.length ? items.map((task) => `<article class="hr-task">
             <button type="button" class="hr-title-button" data-action="details" data-id="${task.id}">${e(task.title)}</button>
-            <p>${e(task.category)} · ${dayLabel(day(task.start_at))}</p>${manager() ? `<p>${e(employee(task.employee_id)?.name)}</p>` : ''}
+            <p>${e(task.category)} · ${task.is_unscheduled ? 'Unscheduled' : dayLabel(day(task.start_at))}</p>${manager() ? `<p>${e(employee(task.employee_id)?.name)}</p>` : ''}
             ${task.priority ? tag('Priority', 'peach') : ''}${task.blocked_reason ? `<p class="hr-message">${e(task.blocked_reason)}</p>` : ''}
             ${task.work_state === 'reschedule' ? tag('Needs rescheduling', 'sand') : ''}${task.work_state === 'review' ? tag('In review', 'lavender') : ''}
             ${activeSession(task) ? tag('Timer running', 'sage') : ''}

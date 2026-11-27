@@ -78,7 +78,7 @@ export function createWorksheetViews(ui) {
       ${reportTable('Breaks and travel', ['Type', 'Start', 'End', 'Notes'], report.periods.map((row) =>
         [labels[row.kind], timestamp(row.start_at), timestamp(row.end_at), e(row.note || '—')]), 'No breaks or travel recorded.')}
       ${reportTable('Task timings', ['Task', 'Scheduled', 'Estimate', 'Recorded', 'Status'], report.tasks.map((row) =>
-        [e(row.title), timestamp(row.start_at), duration(row.estimate * minute), duration(taskElapsed(row.id)),
+        [e(row.title), row.is_unscheduled ? 'Unscheduled' : timestamp(row.start_at), duration(row.estimate * minute), duration(taskElapsed(row.id)),
           e(row.completed_at ? 'Completed' : row.shoot_status !== 'booked' ? row.shoot_status : row.work_state === 'ready' ? 'Pending' : row.work_state)]), 'No assigned or tracked tasks.')}
       ${reportTable('Approved attendance corrections', ['Date', 'Check in', 'Check out', 'Reason'], report.corrections.map((row) =>
         [e(row.day_from), timestamp(row.clock_in), timestamp(row.clock_out), e(row.reason)]), 'No approved time corrections.')}
@@ -127,7 +127,7 @@ export function createWorksheetViews(ui) {
     for (const row of report.periods) add('Break or travel', day(row.start_at), labels[row.kind], row.note || '',
       timestamp(row.start_at) + ' to ' + timestamp(row.end_at));
     for (const task of report.tasks) {
-      add('Task', day(task.start_at), task.title, 'Scheduled minutes', task.estimate);
+      add('Task', day(task.start_at), task.title, task.is_unscheduled ? 'Unscheduled estimate (minutes)' : 'Scheduled minutes', task.estimate);
       add('Task', day(task.start_at), task.title, 'Recorded minutes', minutes(taskElapsed(task.id)));
     }
     for (const row of report.corrections) add('Correction', row.day_from, 'Approved', row.reason, timestamp(row.clock_in) + ' to ' + timestamp(row.clock_out));
@@ -159,7 +159,7 @@ export function createWorksheetViews(ui) {
       <label class="full">Review note<textarea name="note" maxlength="800" rows="4" required></textarea></label>`, 'Save decision')),
     'end-shift': (_button, _value, id) => openDialog('End shift', '', entryForm('attendance', `
       <input type="hidden" name="shiftId" value="${id}"><input type="hidden" name="action" value="end-shift">
-      <p class="full">This records your departure and stops location monitoring. If you’re offline, keep this tab open to send the report when you reconnect.</p>`, 'End shift')),
+      <p class="full">This records your departure and stops location monitoring. If you’re offline, the workspace will show when your departure has been saved on this device.</p>`, 'End shift')),
     'period-end': (button, _value, id) => applyAction(button, 'attendance/period', { id, action: 'end' }, 'Time recorded.'),
     'period-start': (_button, kind) => {
       const now = Date.now();

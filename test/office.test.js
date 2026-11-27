@@ -136,3 +136,47 @@ test('self-hosted push scheduling claims and sends a reminder only once', async 
   assert.match(received[0].body, /^Test shoot starts at /);
   assert.ok(db.prepare('SELECT sent_at FROM push_deliveries').get().sent_at);
 });
+
+test('work update push is opt-in per device and retries without copying private details', async (t) => {
+  const initial = new Date('2026-11-27T15:00:00+05:30');
+  t.mock.timers.enable({ apis: ['Date'], now: initial });
+  const db = openStore(new DatabaseSync(':memory:'));
+  t.after(() => db.close());
+  const adapter = sqliteAdapter(db);
+  const opted = 'https://fcm.googleapis.com/fcm/send/opted';
+  const defaultDevice = 'https://fcm.googleapis.com/fcm/send/default';
+  await adapter.run("INSERT INTO employees (id, name, role, email, color) VALUES (1, 'Test employee', 'Editor', 'push@example.invalid', 'sage')");
+  for (const endpoint of [opted, defaultDevice]) {
+    await adapter.run('INSERT INTO push_subscriptions (employee_id, endpoint, p256dh, auth_secret) VALUES (1, ?, ?, ?)', endpoint, 'test-key', 'test-secret');
+  }
+  await adapter.run(`
+    INSERT INTO operation_notices (employee_id,event_key,title,message,created_at) VALUES
+      (1,'assigned:1','Work assignment updated','Private customer and location',?),
+      (1,'shift-review:2','Shift needs review','Another private record',?)
+  `, Date.now(), Date.now() - 21 * 60_000);
+  const received = [];
+  const createDevice = () => createMobilePush({
+    generateVAPIDKeys: () => ({ publicKey: 'test-public', privateKey: 'test-private' }),
+    generateRequestDetails: (subscription, payload) => ({ endpoint: subscription.endpoint, method: 'POST', body: payload }),
+  }, 'https://studio.example.invalid', async (endpoint, request) => {
+    received.push({ endpoint, payload: JSON.parse(request.body) });
+    return new Response(null, { status: received.length === 1 ? 503 : 201 });
+  });
+  const first = createDevice();
+  assert.deepEqual(await first.status(adapter, 1, opted), { enabled: true, updatesEnabled: false });
+  assert.equal((await first.dispatch(adapter)).processed, 0);
+  await assert.rejects(first.setUpdates(adapter, 3, { endpoint: opted, enabled: true }), { status: 409 });
+  assert.deepEqual(await first.setUpdates(adapter, 1, { endpoint: opted, enabled: true }), { enabled: true, updatesEnabled: true });
+  await Promise.all([first.dispatch(adapter), first.dispatch(adapter)]);
+  assert.equal(received.length, 1);
+  assert.equal((await adapter.get('SELECT attempts FROM operation_push_deliveries')).attempts, 1);
+  t.mock.timers.setTime(initial.valueOf() + 2 * 60_000);
+  const restarted = createDevice();
+  await restarted.dispatch(adapter);
+  await restarted.dispatch(adapter);
+  assert.equal(received.length, 2);
+  assert.deepEqual(received[0], received[1]);
+  assert.equal(received[0].endpoint, opted);
+  assert.equal(received[0].payload.body, 'Work assignment updated. Open the workspace for details.');
+  assert.ok((await adapter.get('SELECT sent_at FROM operation_push_deliveries')).sent_at);
+});

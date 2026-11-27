@@ -71,6 +71,17 @@ The online backup uses SQLite’s snapshot API. Backup rotation only applies to 
 
 Open **Employees → Role permissions** to grant review permissions to an access role, and **Access role** on the employee’s row to assign it. Delegates use **Review queue** for daily plans, task changes and completions, attendance and leave, or footage. Permission changes apply on the employee’s next API request. Staff review permissions do not grant access to financial records, employee management or the general business audit.
 
-If the connection drops while an employee uses End shift, the loaded tab keeps that departure request in memory and pauses GPS monitoring. Keep the tab open until it confirms delivery. The server records it with GPS unverified and with a review requirement. If the shift has already changed, the server preserves the existing record and sends the issue to the administrator. Review the attendance and business audit before applying a time correction. Closing or reloading the tab clears an unsent request.
+If the connection drops while an employee uses End shift, the browser pauses GPS monitoring and encrypts the departure for the office server. Once the workspace says the report was saved on the device, the report can survive a reload and will be sent after the same employee reconnects or signs in again. If browser storage is unavailable, the message asks the employee to keep the tab open. The server records a GPS-unverified departure requiring review. If the shift has already changed, it preserves the existing record and alerts the administrator. Review the attendance and business audit before applying a time correction. Pending encrypted departures remain tied to the office database and may require manual correction after restoring a snapshot taken before the encryption keys were created.
 
 The worksheet’s work performance panel shows facts from the selected employee and date period. A missing check-in is shown separately from approved unpaid leave. Task comparisons skip periods with confirmed leave, official travel, GPS verification gaps or task approvals and schedule changes.
+
+
+## Flexible work and receipt growth
+
+When assigning a non-shoot task, choose **Assign without a scheduled start** to place it on the employee’s board without a calendar date. It does not trigger time-based reminders. The **Next available task** panel prioritizes assigned work that is ready. A later approved reschedule gives the task a start time and retains previously recorded work.
+
+The **Receipt growth** panel compares recorded cash receipts with the prior month or the prior year. When the selected period is incomplete, the comparison uses the same elapsed date in the prior period. A percentage appears when the prior period has recorded receipts.
+
+## Optional mobile work updates
+
+Enable mobile alerts on a supported device to receive 30-minute scheduled-start reminders. Turn on work updates separately on that same device for actionable task, approval, lunch, footage and shift alerts. The studio still receives its in-app notices when Web Push is disabled. Web Push uses the device browser’s delivery service and needs an internet connection. Project names, client details and employee notes stay in the signed-in workspace for work-update alerts.

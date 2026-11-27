@@ -71,7 +71,7 @@ export function createOperationsViews(ui) {
     const end = interval === 'month' ? dayStart(studioDay(start + dayLength * 32).slice(0, 7) + '-01') :
       anchor + dayLength * (interval === 'week' ? 7 : 1);
     const tasks = state().tasks.filter((task) => task.start_at < end && task.start_at + 60_000 * task.estimate > start &&
-      task.shoot_status === 'booked' && task.work_state !== 'reschedule' && !task.is_open).sort((a, b) => a.start_at - b.start_at);
+      !task.is_unscheduled && task.shoot_status === 'booked' && task.work_state !== 'reschedule' && !task.is_open).sort((a, b) => a.start_at - b.start_at);
     const days = new Map();
     for (const task of tasks) {
       const day = studioDay(Math.max(start, task.start_at));

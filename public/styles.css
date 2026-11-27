@@ -379,3 +379,7 @@ table .tag{white-space:nowrap}
   .page-head{align-items:flex-start;flex-direction:column;gap:10px}
   .page-head>.card-actions{justify-content:flex-start}
 }
+.task-planned-time{min-width:0;margin:0;padding:0;border:0}
+.next-work{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.next-work p{color:var(--muted);margin-top:4px}
+.worksheet-totals dd{overflow-wrap:anywhere}

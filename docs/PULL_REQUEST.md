@@ -2,16 +2,17 @@
 
 Move the studio workspace to Node.js 24 and SQLite. Keep the existing login, calendar subscriptions, employee and administrator portals, and optional mobile reminders.
 
-- Add daily plan approvals, task change and completion reviews, emergency scheduling, and next-workday reminders.
-- Add multiple office pins, configurable GPS boundaries, break and shoot-travel timers, shift review, worksheets and offline departure reconciliation.
-- Add scoped client projects and delivery links, private attachments with verified backups, footage approval, revenue contributions and expanded financial reporting.
+- Add daily plan approvals, task change and completion reviews, emergency scheduling, unscheduled assignments, next-task suggestions and next-workday reminders.
+- Add multiple office pins, configurable GPS boundaries, break and shoot-travel timers, shift review, worksheets and encrypted offline departure recovery after reload.
+- Add scoped client projects and delivery links, private attachments with verified backups, footage approval, revenue contributions and expanded financial reporting and growth comparisons.
+- Add device-level controls for optional mobile work updates.
 - Add delegated review permissions and audit records for scheduling, attendance, files, access and financial changes.
 
 ## Verification
 
-- 27 local Node tests cover access, legacy import, scheduling, GPS, offline departures, finances, private uploads, project authorization, footage approval and database and attachment recovery.
+- 31 local Node tests cover access, legacy import, scheduling, GPS, offline departures, finances, private uploads, project authorization, footage approval and database and attachment recovery.
 - GitHub Actions runs the regression suite on Linux and Windows.
-- Chromium exercised admin and employee workflows at seven viewport widths using synthetic data.
+- Chromium exercised the new workflows and checked 20 admin routes and 17 employee routes at seven viewport widths using synthetic data.
 - The public launcher scored 100 in all four Lighthouse categories in the local desktop and mobile check. Authenticated flows were verified separately in Chromium.
 
 ## Review and release

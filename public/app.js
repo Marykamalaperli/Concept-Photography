@@ -1,3 +1,4 @@
+import { hasSavedDeparture, prepareDepartureStorage } from './offline-queue.js';
 import {
   additionalShootLocations, assignedTo, availableShoots, boundarySampleDelay, fenceRadius, maxAdditionalShootSites, maxFixAge, officeSites, presenceAt, returnSite, shootSites,
 } from './attendance-policy.js';
@@ -8,7 +9,7 @@ import { createFootageViews } from './footage-views.js';
 import { createWorksheetViews } from './worksheet-views.js';
 import { createOperationsViews } from './operations-views.js';
 import { loginView, passwordField, togglePassword, workspaceRequest } from './access-view.js';
-import { financeCsv, financeGroups, financeReport, monthlyCashTrend } from './finance-report.js';
+import { cashReceiptComparison, financeCsv, financeGroups, financeReport, monthlyCashTrend } from './finance-report.js';
 import {
   currentPushSubscription, needsHomeScreen, preparePushWorker, subscribeToMobileAlerts, supportsMobileAlerts,
 } from './mobile-alerts.js';
@@ -101,6 +102,8 @@ let watcher;
 let lastFix;
 let observing = false;
 let offlineDeparture;
+let offlineStorage;
+let offlineKeyCheck;
 let syncingDeparture = false;
 let shownShootIds = '';
 let mobileDevice;
@@ -179,7 +182,7 @@ function taskStatus(task) {
   if (task.completed_at) return tag('Completed', 'sage');
   if (activeSession(task)) return tag('In progress', 'lavender');
   if (sessionsFor(task).length) return tag('Paused', 'sand');
-  return tag('Scheduled', 'neutral');
+  return tag(task.is_unscheduled ? 'Unscheduled' : 'Scheduled', 'neutral');
 }
 
 function heading(title, copy, action = '') {
@@ -357,7 +360,8 @@ function clockCard() {
         </select></label>` : ''}
       ${(shift || !sites.length) && boundSite ? `<p class="hr-clock-site">${icon('map-pin')}${e(boundSite.name)}</p>` : ''}
       ${offlineDeparture ? `<p class="location-watch" role="status">${offlineDeparture.error ? e(offlineDeparture.error) :
-        'Departure queued. Keep this tab open. Your report will be sent when the connection returns.'}</p>
+        offlineDeparture.encrypted ? 'Departure saved on this device. It will be sent when this account reconnects.' :
+        'Departure queued. Keep this tab open until your report is sent.'}</p>
         ${offlineDeparture.error ? actionButton('Discard queued request', 'discard-offline-departure', 'x', 'secondary') : ''}` :
         `<div class="hr-clock-buttons">${clockButton('Check in', 'log-in', canClockIn)}${clockButton('Check out', 'log-out', canClockOut)}</div>
         ${worksheetViews.clockDetails(shift, last)}`}
@@ -442,6 +446,7 @@ function schedulePage() {
   const now = Date.now();
   const filtered = state.tasks.filter((task) => {
     if (employeeFilter !== 'all' && !assignedTo(task, Number(employeeFilter))) return false;
+    if (task.is_unscheduled && ['today','upcoming'].includes(scheduleFilter)) return false;
     if (scheduleFilter === 'today') return day(task.start_at) === day(now);
     if (scheduleFilter === 'upcoming') return task.shoot_status === 'booked' && !task.completed_at && task.start_at + task.estimate * 60_000 > now;
     if (scheduleFilter === 'completed') return Boolean(task.completed_at);
@@ -540,7 +545,7 @@ function taskCard(task, inDialog = false) {
     <div class="task-details">
       ${task.crew?.length ? `<div class="inline">${icon('users')}${e(task.crew.map((member) => member.name).join(', '))}</div>` :
         manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
-      <div class="inline">${icon('calendar-days')}${task.shoot_status === 'postponed' ? 'Awaiting a new date' :
+      <div class="inline">${icon('calendar-days')}${task.is_unscheduled ? 'Unscheduled' : task.shoot_status === 'postponed' ? 'Awaiting a new date' :
         `${shortDate.format(task.start_at)} · ${time(task.start_at)}${isShoot || task.parent_shoot_id ? ` – ${shootEndLabel(task)}` : ''} IST`}</div>
       ${sites.length > 1 ? `<div class="shoot-site-list"><strong>Shoot locations</strong><ul>
         ${sites.map((site) => `<li class="inline">${icon('map-pin')}<span>${e(site.name)}</span> ${mapLink(site, true)}</li>`).join('')}
@@ -679,6 +684,7 @@ function financesPage() {
     <section class="panel net-panel"><div><h2>Cash profit ${financeMonth ? 'for this period' : 'to date'}</h2><p>Payments received less expenses recorded${report.received
       ? ` · ${new Intl.NumberFormat('en-IN', { style: 'percent', maximumFractionDigits: 1 }).format(report.net / report.received)} cash margin` : ''}</p></div><strong>${money(report.net)}</strong></section>
     ${cashTrendPanel()}
+    ${cashGrowthPanel()}
     <div class="finance-breakdowns">${financeGroups(report, state.tasks, state.projects).map(([label, rows]) => `<section class="panel">
       <div class="panel-head"><h2>${label}</h2></div>
       ${rows.length ? table(label, ['Name', 'Total'], rows.map(([name, total]) => [e(name), money(total)])) : empty('No transactions in this period.')}
@@ -713,6 +719,27 @@ function cashTrendPanel() {
   </section>`;
 }
 
+function cashGrowthPanel() {
+  const comparison = cashReceiptComparison(state.payments, financeMonth, today());
+  if (!comparison) return '';
+  const { currentPeriod, previousPeriod, current, previous, ongoing, growth } = comparison;
+  const format = (period) => period.length === 4 ? period : new Intl.DateTimeFormat('en-IN', {
+    month: 'long', year: 'numeric', timeZone: 'UTC',
+  }).format(new Date(period + '-01T12:00:00Z'));
+  const change = growth == null ? '—' : new Intl.NumberFormat('en-IN', {
+    style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero',
+  }).format(growth);
+  return `<section class="panel finance-table">
+    <div class="panel-head"><div><h2>Receipt growth</h2>${ongoing ? '<p>Periods are compared through the same elapsed date.</p>' : ''}</div></div>
+    <dl class="worksheet-totals">
+      <div><dt>${format(currentPeriod)}</dt><dd>${money(current)}</dd></div>
+      <div><dt>${format(previousPeriod)}</dt><dd>${money(previous)}</dd></div>
+      <div><dt>Change in receipts</dt><dd>${change}</dd></div>
+    </dl>
+    ${growth == null ? '<p class="hr-muted">The previous period has no receipts to compare.</p>' : ''}
+  </section>`;
+}
+
 function exportFinances() {
   const report = financeReport(state, financeMonth, today(), day);
   const url = URL.createObjectURL(new Blob([financeCsv(report, financeMonth, state.tasks)], { type: 'text/csv;charset=utf-8' }));
@@ -735,8 +762,11 @@ function mobileAlertControls() {
   };
   if (!mobileDevice?.registration) return { description: 'Checking mobile alert settings…' };
   if (mobileDevice.enabled) return {
-    description: 'Mobile alerts are on for this device. You can close the workspace and still receive reminders.',
-    action: actionButton('Disable mobile alerts', 'disable-alerts', 'bell-off', 'secondary'),
+    description: mobileDevice.updatesEnabled ? 'Schedule reminders and work updates are enabled on this device.' :
+      'Schedule reminders are enabled. You can also receive assignment, task and review updates.',
+    action: actionButton(mobileDevice.updatesEnabled ? 'Turn off work updates' : 'Turn on work updates', 'toggle-work-updates',
+      mobileDevice.updatesEnabled ? 'bell-off' : 'bell', 'secondary') +
+      actionButton('Disable mobile alerts', 'disable-alerts', 'bell-off', 'secondary'),
   };
   return {
     description: 'Enable alerts on this device to receive work reminders 30 minutes before the scheduled start.',
@@ -798,7 +828,7 @@ async function prepareMobileAlerts() {
     const [registration, key] = await Promise.all([preparePushWorker(), request('push/key')]);
     const subscription = await registration.pushManager.getSubscription();
     const status = subscription ? await request('push/status', { endpoint: subscription.endpoint }) : { enabled: false };
-    Object.assign(device, { registration, key: key.publicKey, enabled: status.enabled });
+    Object.assign(device, { registration, key: key.publicKey, enabled: status.enabled, updatesEnabled: status.updatesEnabled });
   } catch {
     device.error = true;
   }
@@ -973,6 +1003,8 @@ function clearWorkspace(info) {
   projectViews.reset();
   reviewViews.reset();
   offlineDeparture = undefined;
+  offlineStorage = undefined;
+  offlineKeyCheck = undefined;
   clientSearch = '';
   mobileMenu = false;
   if (dialog.open) dialog.close();
@@ -1004,6 +1036,7 @@ async function refresh({ force = false } = {}) {
       history.replaceState(null, '', location.pathname + '#dashboard');
     }
     page = currentPage();
+    prepareOfflineDeparture();
     render();
     if (!first) notifyReminders(reminders().filter((notice) => !notice.read_at && !oldIds.has(notice.task_id)));
   } catch (error) {
@@ -1284,8 +1317,12 @@ function taskForm(task, type = 'all', sourceShoot = null) {
       <p class="field-note" id="shoot-time-help">The work can end the next day and run for up to 24 hours.</p>
     </fieldset>
     <fieldset class="full task-time-fields" ${isShoot || parentShootId ? 'hidden disabled' : ''}>
-      <label>Scheduled date<input name="startDate" type="date" required value="${task ? day(task.start_at) : today()}"></label>
-      <label>Scheduled time (IST)<input name="startTime" type="time" required value="${task ? studioTimeInput.format(task.start_at) : ''}"></label>
+      ${manager() && !parentShootId && (!task || task.is_unscheduled) ? `<label class="full check-row"><input type="checkbox" name="unscheduled"
+        ${task?.is_unscheduled ? 'checked' : ''}> Assign without a scheduled start</label>` : ''}
+      <fieldset class="full form-grid task-planned-time" ${task?.is_unscheduled ? 'hidden disabled' : ''}>
+        <label>Scheduled date<input name="startDate" type="date" required value="${task && !task.is_unscheduled ? day(task.start_at) : today()}"></label>
+        <label>Scheduled time (IST)<input name="startTime" type="time" required value="${task && !task.is_unscheduled ? studioTimeInput.format(task.start_at) : ''}"></label>
+      </fieldset>
       <label>Duration in minutes<input name="estimate" type="number" required min="1" max="1440" value="${task?.estimate ?? 60}"></label>
     </fieldset>
     ${parentShootId ? `<label>Delivery deadline (IST)<input name="deliveryDue" type="datetime-local" required value="${task?.delivery_due_at ? studioDateTimeInput(task.delivery_due_at) : ''}"></label>` : ''}
@@ -1414,7 +1451,7 @@ function getLocation() {
 }
 
 function trackingTarget() {
-  if (offlineDeparture) return null;
+  if (offlineDeparture || offlineKeyCheck?.restoring) return null;
   const latest = latestShift();
   const current = latest?.clock_out === null;
   const site = current
@@ -1663,13 +1700,58 @@ function clockAction(button, taskId) {
   });
 }
 
+async function persistDeparture(job) {
+  const storage = offlineStorage;
+  if (!storage || !job.command || job.saving) return;
+  job.saving = true;
+  try {
+    const encrypted = await storage.save(job.command);
+    if (offlineDeparture === job && encrypted) job.encrypted = encrypted;
+  } catch {
+    // A loaded tab can still submit the report if persistent browser storage is unavailable.
+  } finally {
+    job.saving = false;
+    if (offlineDeparture === job) {
+      render();
+      syncOfflineDeparture();
+    }
+  }
+}
+
+async function prepareOfflineDeparture() {
+  if (offlineStorage || offlineKeyCheck || !actor() || !navigator.onLine || !globalThis.crypto?.subtle) return;
+  const check = { restoring: hasSavedDeparture() };
+  offlineKeyCheck = check;
+  try {
+    const storage = await prepareDepartureStorage(await request('attendance/offline-key'));
+    if (offlineKeyCheck !== check) return;
+    offlineStorage = storage;
+    const encrypted = storage.load();
+    if (encrypted && !offlineDeparture) {
+      offlineDeparture = { encrypted };
+      render();
+      await syncOfflineDeparture();
+    } else if (offlineDeparture) {
+      await persistDeparture(offlineDeparture);
+    }
+  } catch {
+    // Live attendance and in-memory departure reports remain available.
+  } finally {
+    if (offlineKeyCheck === check) {
+      offlineKeyCheck = undefined;
+      updateTracking();
+    }
+  }
+}
+
 async function syncOfflineDeparture() {
-  if (!offlineDeparture || offlineDeparture.error || syncingDeparture || pending || !actor() || !navigator.onLine) return;
+  if (!offlineDeparture || offlineDeparture.error || offlineDeparture.saving || syncingDeparture || pending || !actor() || !navigator.onLine) return;
   const job = offlineDeparture;
   syncingDeparture = true;
   try {
-    const result = await request('attendance/offline-departure', job.command);
+    const result = await request('attendance/offline-departure', job.encrypted ? { encrypted: job.encrypted } : job.command);
     if (offlineDeparture !== job) return;
+    if (job.encrypted) offlineStorage?.remove(job.encrypted);
     offlineDeparture = undefined;
     showToast(result.status === 'conflict' ? 'Departure sent for review. The attendance record had already changed.' :
       'Departure sent for review with GPS unverified.');
@@ -1688,6 +1770,7 @@ function connectivityChanged() {
   const label = document.querySelector('.connection-status');
   if (label) label.hidden = navigator.onLine;
   if (navigator.onLine) {
+    prepareOfflineDeparture();
     if (offlineDeparture) syncOfflineDeparture();
     else restartLocationTracking();
   } else updateTracking();
@@ -1753,6 +1836,7 @@ document.addEventListener('click', (event) => {
       mutate(button, async () => revenueViews.allocationForm(await request('revenue/allocations', { shootId: id })));
       break;
     case 'discard-offline-departure':
+      if (offlineDeparture?.encrypted) offlineStorage?.remove(offlineDeparture.encrypted);
       offlineDeparture = undefined;
       render();
       break;
@@ -1950,6 +2034,18 @@ document.addEventListener('click', (event) => {
         showToast('Mobile alerts enabled on this device.');
       });
       break;
+    case 'toggle-work-updates':
+      mutate(button, async () => {
+        const device = mobileDevice;
+        const subscription = await currentPushSubscription();
+        if (!subscription) throw new Error('Enable mobile alerts on this device first.');
+        const result = await request('push/updates', { endpoint: subscription.endpoint, enabled: !device.updatesEnabled });
+        if (mobileDevice === device) {
+          device.updatesEnabled = result.updatesEnabled;
+          render();
+        }
+      });
+      break;
     case 'disable-alerts':
       mutate(button, async () => {
         const subscription = await currentPushSubscription();
@@ -1958,6 +2054,7 @@ document.addEventListener('click', (event) => {
           await subscription.unsubscribe().catch(() => {});
         }
         mobileDevice.enabled = false;
+        mobileDevice.updatesEnabled = false;
         mobileDevice.testResult = '';
         render();
         showToast('Mobile alerts disabled on this device.');
@@ -2046,6 +2143,7 @@ document.addEventListener('change', (event) => {
       notice.replaceChildren();
     }
   }
+  if (input.name === 'unscheduled') toggleFields(form.querySelector('.task-planned-time'), !input.checked);
   if (input.name === 'category') {
     const shoot = input.value === 'Photo shoot';
     toggleFields(form.querySelector('.shoot-fields'), shoot);
@@ -2068,6 +2166,13 @@ document.addEventListener('change', (event) => {
     const direct = input.value !== 'open';
     form.querySelector('.assignee').hidden = !direct;
     form.elements.employeeId.disabled = !direct;
+    if (form.elements.unscheduled) {
+      if (!direct && form.elements.unscheduled.checked) {
+        form.elements.unscheduled.checked = false;
+        toggleFields(form.querySelector('.task-planned-time'), true);
+      }
+      form.elements.unscheduled.disabled = !direct;
+    }
     const emergency = form.querySelector('.emergency-option');
     if (emergency) {
       emergency.hidden = !direct;
@@ -2100,10 +2205,13 @@ document.addEventListener('submit', (event) => {
   const fields = new FormData(form);
   const data = Object.fromEntries(fields);
   if (kind === 'attendance' && data.action === 'end-shift' && !navigator.onLine) {
-    offlineDeparture = { command: { requestId: crypto.randomUUID(), shiftId: Number(data.shiftId), reportedAt: Date.now() } };
+    offlineDeparture = { command: {
+      requestId: crypto.randomUUID(), shiftId: Number(data.shiftId), reportedAt: Date.now(), employeeId: actorId,
+    } };
     if (dialog.open) dialog.close();
     stopTracking();
     render();
+    persistDeparture(offlineDeparture);
     return;
   }
   if (kind === 'attendance' && data.action === 'end-shift' && watcher?.employeeId === actorId &&
@@ -2129,11 +2237,12 @@ document.addEventListener('submit', (event) => {
   if (kind === 'operations/task-change' && data.kind === 'reschedule') data.start = `${data.proposedDateTime}:00+05:30`;
   if (kind === 'tasks') {
     data.emergency = fields.has('emergency');
+    data.unscheduled = data.category !== 'Photo shoot' && fields.has('unscheduled');
     if (data.category === 'Photo shoot' || data.parentShootId) {
       data.startAt = `${data.shootFrom}:00+05:30`;
       data.endAt = `${data.shootTo}:00+05:30`;
       if (form.querySelector('.crew-fields')) data.crew = fields.getAll('crew');
-    } else {
+    } else if (!data.unscheduled) {
       data.startAt = `${data.startDate}T${data.startTime}:00+05:30`;
     }
     if (data.parentShootId) data.deliveryDueAt = `${data.deliveryDue}:00+05:30`;
@@ -2254,6 +2363,7 @@ export function startWorkspace({ restore } = {}) {
   setInterval(tick, 1000);
   setInterval(() => {
     if (offlineDeparture) syncOfflineDeparture();
+    prepareOfflineDeparture();
     if (!pending && !observing && session?.actor && navigator.onLine) refresh().catch(() => {});
   }, 15000);
 }

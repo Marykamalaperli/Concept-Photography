@@ -1,4 +1,5 @@
-import { installOfflineAttendanceSchema } from './lib/offline-attendance.js';
+import { installOperationPushSchema } from './lib/operation-push.js';
+import { installOfflineAttendanceSchema, installOfflineKeys } from './lib/offline-attendance.js';
 import { installDelegationSchema } from './lib/delegation.js';
 import { installProjectSchema } from './lib/projects.js';
 import { installOperationsSchema } from './lib/operations-schema.js';
@@ -338,5 +339,20 @@ export function openStore(db) {
   if (db.prepare('PRAGMA user_version').get().user_version < 16) installProjectSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 17) installDelegationSchema(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 18) installOfflineAttendanceSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 19) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        ALTER TABLE tasks ADD COLUMN is_unscheduled INTEGER NOT NULL DEFAULT 0 CHECK(is_unscheduled IN (0,1));
+        PRAGMA user_version = 19;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  if (db.prepare('PRAGMA user_version').get().user_version < 20) installOperationPushSchema(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 21) installOfflineKeys(db);
   return db;
 }

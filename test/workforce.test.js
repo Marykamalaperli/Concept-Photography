@@ -14,7 +14,7 @@ import { hashPassword } from '../lib/accounts.js';
 import { mapsLocation } from '../lib/maps.js';
 import { refreshReminders } from '../lib/reminders.js';
 import { createMobilePush } from '../lib/mobile-push.js';
-import { financeCsv, financeGroups, financeReport, monthlyCashTrend } from '../public/finance-report.js';
+import { cashReceiptComparison, financeCsv, financeGroups, financeReport, monthlyCashTrend } from '../public/finance-report.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
 
@@ -577,4 +577,20 @@ test('annual reports and finance breakdowns count every receipt and expense once
   assert.deepEqual(groups['Receipts by category'], [['Final balance', 122], ['Deposit', 101]]);
   assert.deepEqual(groups['Expenses by category'], [['Travel', 12]]);
   assert.match(financeCsv(result, '2026', state.tasks), /Final balance/);
+});
+
+
+test('cash growth compares matching elapsed periods and omits percentages with no prior receipts', () => {
+  const payments = [
+    { paid_on: '2024-02-29', amount_paise: 1000 }, { paid_on: '2024-03-28', amount_paise: 2000 },
+    { paid_on: '2024-03-31', amount_paise: 4000 }, { paid_on: '2025-02-28', amount_paise: 1500 },
+    { paid_on: '2025-03-30', amount_paise: 1200 },
+  ];
+  const year = cashReceiptComparison(payments, '2025', '2025-03-30');
+  assert.deepEqual([year.current, year.previous, year.growth], [2700, 3000, -.1]);
+  const month = cashReceiptComparison(payments, '', '2025-03-30');
+  assert.deepEqual([month.current, month.previous, month.growth], [1200, 1500, -.2]);
+  const closed = cashReceiptComparison(payments, '2025-02', '2025-03-30');
+  assert.deepEqual([closed.current, closed.previous, closed.growth], [1500, 0, null]);
+  assert.equal(cashReceiptComparison(payments, '2025-04', '2025-03-30'), null);
 });

@@ -2,23 +2,24 @@
 
 ## Continuation after 37ca25e
 
-The development branch extends the same Node.js 24 and SQLite workspace with reviewed scheduling, attendance and breaks, worksheets, client projects, secure evidence, footage storage approval, revenue contribution, finance reporting, delegated reviews and offline departure reconciliation. Schema versions 10–18 upgrade existing databases. The [requirements matrix](docs/REQUIREMENTS_MATRIX.md) covers all 60 original sections and 21 continuation sections.
+The development branch extends the same Node.js 24 and SQLite workspace with reviewed scheduling, attendance and breaks, worksheets, client projects, secure evidence, footage storage approval, revenue contribution, finance reporting, delegated reviews and offline departure reconciliation. Schema versions 10–21 upgrade existing databases. The [requirements matrix](docs/REQUIREMENTS_MATRIX.md) covers all 60 original sections and 21 continuation sections.
 
-- Daily plans are drafted, submitted and approved with revision history. Emergency shoots move overlapping non-shoot work into rescheduling while retaining recorded time.
-- Multiple authorized office and shoot pins use configured distance and accuracy limits. Two recent GPS observations confirm automatic changes. The End shift action records an employee’s departure even when GPS is unavailable. A tab that remains open can send a queued departure after reconnecting.
+- Daily plans are drafted, submitted and approved with revision history. Managers can assign flexible work without setting a start time. Employees see their next available task on the board. Emergency shoots move overlapping non-shoot work into rescheduling while retaining recorded time.
+- Multiple authorized office and shoot pins use configured distance and accuracy limits. Two recent GPS observations confirm automatic changes. The End shift action records an employee’s departure even when GPS is unavailable. Encrypted departure reports can survive reload and synchronize when the same employee signs in again.
 - An administrator can grant four review permissions across seven staff roles. Private work, financial data and project files are authorized separately. Worksheet performance comparisons exclude approved leave, official travel, GPS gaps and tasks awaiting or affected by schedule changes.
+- Per-device Web Push preferences keep schedule reminders and actionable work updates separate. Work updates omit private notes, locations and client details.
 - Private attachments use configurable disk storage and SQLite metadata. Checksummed backups include attachments. A completed shoot queues one storage check, with a configurable assignee and screenshot approval.
-- Revenue contributions use a share of booked shoot value and closed work sessions. Company receipt, expense and cash profit figures remain separate. Project and finance reports are based on actual records.
+- Revenue contributions use a share of booked shoot value and closed work sessions. Company receipt, expense and cash profit figures remain separate. Project and finance reports are based on actual records. Growth comparisons match elapsed dates for incomplete months and years.
 
 ### Verification
 
-- 27 Node tests pass locally with synthetic records. GitHub Actions run on Linux and Windows without deploying.
-- Chromium exercised both roles, including attendance, breaks, plans and approvals, evidence, worksheet CSV, footage, project access, revenue, finance and offline departure reconciliation. Responsive checks used widths of 320, 375, 390, 768, 1024, 1440 and 1920 pixels.
+- 31 Node tests pass locally with synthetic records. GitHub Actions run on Linux and Windows without deploying.
+- Chromium exercised both roles, including attendance, breaks, plans and approvals, evidence, worksheet CSV, footage, project access, revenue, finance and offline departure reconciliation. The responsive sweep covered 20 admin routes and 17 employee routes at widths of 320, 375, 390, 768, 1024, 1440 and 1920 pixels.
 - The local public launcher Lighthouse audit scored 100 in performance, accessibility, best practices and SEO on desktop and mobile. Latest report files are available in the session’s scratch output. This measures the static launcher. The authenticated workspace was checked in Chromium rather than assigned those scores.
 
 ### Remaining development
 
-Start with unscheduled task creation and a next-task view. Preserve the distinction between a task without a scheduled start and the existing required SQLite timestamp, and exclude unscheduled work from calendar and start reminders. Follow with expanded optional mobile delivery, broader offline support and additional business permissions. Full assisted-technology review and real office devices, Windows startup, HTTPS, backup rehearsal and cutover remain separate acceptance work.
+Start with permission rules for delegated client and project administration. The existing role matrix and scoped project APIs provide the entry points. Add regression tests for grant, revocation, ownership and financial isolation. Follow with remaining business audit events, active profile photos and configurable policy thresholds. Assisted-technology checks, real office devices, Windows startup, HTTPS, backup rehearsal and production cutover remain separate acceptance work.
 
 ## Baseline at 37ca25e
 

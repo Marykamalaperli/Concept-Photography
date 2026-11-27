@@ -89,3 +89,31 @@ export function financeGroups(report, tasks, projects) {
     ['Expenses by category', group(report.expenses, (row) => row.category)],
   ];
 }
+
+export function cashReceiptComparison(payments, selectedPeriod, today) {
+  const currentPeriod = selectedPeriod || today.slice(0, 7);
+  const monthly = currentPeriod.length === 7;
+  const [year, month] = currentPeriod.split('-').map(Number);
+  const first = monthly ? currentPeriod + '-01' : currentPeriod + '-01-01';
+  if (first > today) return null;
+  const previousEnd = new Date(Date.UTC(monthly ? year : year - 1, monthly ? month - 1 : 12, 0)).toISOString().slice(0, 10);
+  const previousPeriod = previousEnd.slice(0, currentPeriod.length);
+  const ongoing = today.startsWith(currentPeriod);
+  let previousCutoff = previousEnd;
+  if (ongoing) {
+    const comparisonMonth = monthly ? previousPeriod : previousPeriod + today.slice(4, 7);
+    const [previousYear, previousMonth] = comparisonMonth.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(previousYear, previousMonth, 0)).getUTCDate();
+    const cutoffDay = String(Math.min(Number(today.slice(-2)), lastDay)).padStart(2, '0');
+    previousCutoff = comparisonMonth + '-' + cutoffDay;
+  }
+
+  let current = 0;
+  let previous = 0;
+  for (const entry of payments) {
+    if (entry.paid_on.startsWith(currentPeriod) && entry.paid_on <= today) current += entry.amount_paise;
+    if (entry.paid_on.startsWith(previousPeriod) && entry.paid_on <= previousCutoff) previous += entry.amount_paise;
+  }
+  return { currentPeriod, previousPeriod, current, previous, ongoing,
+    growth: previous ? (current - previous) / previous : null };
+}

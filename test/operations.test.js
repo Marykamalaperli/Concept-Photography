@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { constants, createPublicKey, publicEncrypt } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { hashPassword } from '../lib/accounts.js';
@@ -381,4 +382,55 @@ test('offline departures reconcile once and preserve conflicting attendance evid
   assert.equal(conflict.status, 'conflict');
   assert.equal((await db.get('SELECT clock_out FROM attendance WHERE id = ?', next.id)).clock_out, null);
   assert.ok((await manager('state')).operationNotices.some((row) => row.title === 'Offline departure conflicts with attendance'));
+});
+
+test('unscheduled assignments remain on the board and acquire a date through an approved change', async (t) => {
+  const { db, manager, staff } = await fixture(t);
+  const input = { title: 'Archive the exports', category: 'Studio', location: 'Studio', employeeId: 2, estimate: 12, unscheduled: true };
+  await assert.rejects(staff('tasks', input), { status: 403 });
+  await assert.rejects(manager('tasks', { ...input, assignment: 'open' }), { status: 403 });
+  await assert.rejects(manager('tasks', { ...input, category: 'Photo shoot' }), { status: 403 });
+  const task = await manager('tasks', input);
+  assert.equal(task.is_unscheduled, 1);
+  assert.equal((await staff('state')).tasks.find((row) => row.id === task.id).is_unscheduled, 1);
+  await refreshStudioNotices(db, task.start_at + 2 * minute);
+  assert.equal((await db.get("SELECT COUNT(*) AS count FROM operation_notices WHERE task_id = ? AND title = 'Task finishes soon'", task.id)).count, 0);
+  assert.equal((await db.get('SELECT COUNT(*) AS count FROM reminders WHERE task_id = ?', task.id)).count, 0);
+  await staff('task-action', { taskId: task.id, action: 'start' });
+  const request = await staff('operations/task-change', {
+    taskId: task.id, kind: 'reschedule', start: iso('10:00'), reason: 'Schedule the handoff',
+  });
+  await manager('operations/review-change', { id: request.id, decision: 'approved' });
+  assert.equal((await db.get('SELECT is_unscheduled FROM tasks WHERE id = ?', task.id)).is_unscheduled, 0);
+  assert.equal((await db.get('SELECT start_at FROM tasks WHERE id = ?', task.id)).start_at, Date.parse(iso('10:00')));
+  assert.notEqual((await db.get('SELECT end_at FROM task_sessions WHERE task_id = ?', task.id)).end_at, null);
+});
+
+
+test('a saved encrypted departure can be imported after reauthentication only by its owner', async (t) => {
+  const { db, staff, other } = await fixture(t);
+  const now = Date.now();
+  const shift = await db.get(`
+    INSERT INTO attendance(employee_id, clock_in, in_location, site, last_verified_at)
+    VALUES (2, ?, '{}', '{}', ?) RETURNING id
+  `, now - minute, now - minute);
+  const [key, otherKey] = await Promise.all([staff('attendance/offline-key'), other('attendance/offline-key')]);
+  assert.notEqual(key.accountBinding, otherKey.accountBinding);
+  assert.equal(key.publicKey, otherKey.publicKey);
+  assert.equal(Object.hasOwn(key, 'private_key'), false);
+  const envelope = {
+    requestId: 'a2345678-aaaa-bbbb-cccc-abcdef000001', shiftId: shift.id, employeeId: 2, reportedAt: now - 10_000,
+  };
+  const encrypted = publicEncrypt({
+    key: createPublicKey({ type: 'spki', format: 'der', key: Buffer.from(key.publicKey, 'base64') }),
+    padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256',
+  }, Buffer.from(JSON.stringify(envelope))).toString('base64');
+  await assert.rejects(other('attendance/offline-departure', { encrypted }), { status: 403 });
+  await assert.rejects(staff('attendance/offline-departure', { encrypted: Buffer.alloc(256).toString('base64') }), { status: 400 });
+  await staff('login', { email: 'editor@example.invalid', password });
+  assert.deepEqual(await staff('attendance/offline-key'), key);
+  const recorded = await staff('attendance/offline-departure', { encrypted });
+  assert.equal(recorded.status, 'reported');
+  assert.equal(recorded.reported_at, envelope.reportedAt);
+  assert.deepEqual(await staff('attendance/offline-departure', { encrypted }), recorded);
 });

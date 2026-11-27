@@ -18,7 +18,7 @@ export async function workspaceRequest(path, body) {
   try {
     response = await fetch(`/api/${path}`, {
       headers,
-      ...(['login', 'session', 'state', 'attendance'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
+      ...(['login', 'session', 'state', 'attendance', 'attendance/offline-key', 'attendance/offline-departure'].includes(path) ? { signal: AbortSignal.timeout(12000) } : {}),
       credentials: 'same-origin',
       ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
     });
