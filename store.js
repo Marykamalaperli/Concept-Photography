@@ -1,4 +1,5 @@
 import { installOfflineWork } from './lib/offline-work.js';
+import { installRetentionPolicies } from './lib/retention.js';
 import { installBusinessSettings } from './lib/business-settings.js';
 import { installAuditHistory } from './lib/audit-history.js';
 import { installProfilePhotos } from './lib/profile-photos.js';
@@ -364,5 +365,6 @@ export function openStore(db) {
   if (db.prepare('PRAGMA user_version').get().user_version < 24) installAuditHistory(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 25) installBusinessSettings(db);
   if (db.prepare('PRAGMA user_version').get().user_version < 26) installOfflineWork(db);
+  if (db.prepare('PRAGMA user_version').get().user_version < 27) installRetentionPolicies(db);
   return db;
 }

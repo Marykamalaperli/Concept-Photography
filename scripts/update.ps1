@@ -10,6 +10,8 @@ $previous = & git rev-parse HEAD
 Write-Host 'Stop the workspace and its reverse proxy before continuing this update.'
 $confirmation = Read-Host 'Type STOPPED to continue'
 if ($confirmation -cne 'STOPPED') { throw 'Update cancelled before replacing any files.' }
+$workspaceTask = Get-ScheduledTask -TaskName 'Concept Photography Workspace' -ErrorAction SilentlyContinue
+if ($workspaceTask -and $workspaceTask.State -eq 'Running') { throw 'Stop the workspace scheduled task before updating.' }
 & (Join-Path $PSScriptRoot 'backup.ps1')
 Write-Host "Previous release: $previous"
 & git checkout --detach $ApprovedCommit

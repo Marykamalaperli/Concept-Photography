@@ -1,6 +1,7 @@
 param([ValidateSet('Start','Stop','Restart','Status')][string]$Action = 'Status')
 $ErrorActionPreference = 'Stop'
 $name = 'Concept Photography Workspace'
+Get-ScheduledTask -TaskName $name | Out-Null
 if ($Action -in @('Stop','Restart')) {
     Stop-ScheduledTask -TaskName $name
     $deadline = (Get-Date).AddSeconds(30)

@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { hashPassword, passwordMatches } from '../lib/accounts.js';
 import { createMobilePush } from '../lib/mobile-push.js';
+import { minimizeHistoricalDetails } from '../lib/retention.js';
 import { endAttendanceGap, refreshAttendanceGaps } from '../lib/attendance-gaps.js';
 import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
@@ -79,12 +80,42 @@ test('online SQLite backup restores a verified copy without replacing an existin
     try {
       assert.equal(recovered.prepare('SELECT COUNT(*) AS total FROM clients').get().total, 1);
       assert.equal(db.prepare('SELECT COUNT(*) AS total FROM clients').get().total, 2);
+      assert.deepEqual(recovered.prepare("SELECT action FROM business_audit WHERE subject = 'database recovery' ORDER BY id")
+        .all().map(({ action }) => action), ['backup verified', 'restore verified']);
     } finally {
       recovered.close();
     }
   } finally {
     db.close();
   }
+});
+
+test('configured retention minimizes old personal details while preserving attendance and audit facts', async (t) => {
+  const db = openStore(new DatabaseSync(':memory:'));
+  t.after(() => db.close());
+  const start = Date.parse('2026-07-01T09:00:00+05:30');
+  const end = start + 8 * 3_600_000;
+  const now = start + 71 * 86_400_000;
+  const location = JSON.stringify({ label: 'Studio', latitude: 17.38, longitude: 78.48, accuracy: 7, capturedAt: start });
+  db.exec(`INSERT INTO employees (name, role, email, color) VALUES ('Studio employee','Editor','retention@example.invalid','sage');
+    UPDATE hr_settings SET attendance_fix_days = 45, audit_detail_days = 60 WHERE id = 1;`);
+  db.prepare('INSERT INTO attendance (employee_id,clock_in,clock_out,in_location,out_location) VALUES (1,?,?,?,?)')
+    .run(start, end, location, location);
+  db.prepare('INSERT INTO attendance (employee_id,clock_in,in_location) VALUES (1,?,?)').run(now - 14 * 60_000, location);
+  db.prepare("INSERT INTO business_audit (actor_id,subject,record_id,action,occurred_at,details) VALUES (1,'attendance correction',1,'approved',?,?)")
+    .run(start, JSON.stringify({ privateNote: 'Synthetic old detail' }));
+  assert.deepEqual(await minimizeHistoricalDetails(sqliteAdapter(db), now), { fixes: 1, audits: 1 });
+  const [closed, open] = db.prepare('SELECT * FROM attendance ORDER BY clock_in').all();
+  assert.equal(closed.clock_in, start);
+  assert.equal(closed.clock_out, end);
+  assert.deepEqual(JSON.parse(closed.in_location), { label: 'Studio' });
+  assert.equal(open.in_location, location);
+  const event = db.prepare('SELECT * FROM business_audit ORDER BY id').get();
+  assert.equal(event.actor_id, 1);
+  assert.equal(event.action, 'approved');
+  assert.equal(event.details, '{}');
+  assert.equal(event.details_minimized_at, now);
+  assert.deepEqual(await minimizeHistoricalDetails(sqliteAdapter(db), now), { fixes: 0, audits: 0 });
 });
 
 test('missed GPS checks create one review gap and leave the shift open through verification', async (t) => {

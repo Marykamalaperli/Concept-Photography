@@ -85,7 +85,7 @@ export function createOperationsViews(ui) {
         <label>Calendar view<select id="plan-calendar-interval">${['day', 'week', 'month'].map((option) =>
           `<option value="${option}"${option === interval ? ' selected' : ''}>${status(option)}</option>`).join('')}</select></label>
       </div>
-      ${tasks.length ? [...days].map(([day, rows]) => `<div class="plan-calendar-day"><h3>${e(day)}</h3><ul class="plan-entries-list">${rows.map((task) =>
+      ${tasks.length ? [...days].map(([day, rows]) => `<div class="plan-calendar-day"><h2>${e(day)}</h2><ul class="plan-entries-list">${rows.map((task) =>
         `<li><time>${time(task.start_at)}</time>${taskButton(task)}</li>`).join('')}</ul></div>`).join('') : empty('No assignments in this period.')}
     </section>`;
   }

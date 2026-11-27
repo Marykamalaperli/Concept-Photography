@@ -88,6 +88,7 @@ let state = initialState();
 let session = null;
 let sessionVersion = 0;
 let snapshot;
+let stateTag;
 let actorId;
 let page = 'dashboard';
 let scheduleFilter = 'upcoming';
@@ -117,6 +118,7 @@ let mobileDevice;
 let checkedSite = '';
 let locationCheck = '';
 let clientSearch = '';
+let clientPage = 0;
 let financeMonth = '';
 
 const e = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -648,8 +650,13 @@ function taskCard(task, inDialog = false) {
 }
 
 function clientsPage() {
-  const rows = state.clients.filter((client) => !clientSearch || [client.name, client.phone, client.email, client.category]
-    .some((value) => value?.toLowerCase().includes(clientSearch.toLowerCase()))).map((client) => [
+  const query = clientSearch.toLowerCase();
+  const matches = state.clients.filter((client) => !query || [client.name, client.phone, client.email, client.category]
+    .some((value) => value?.toLowerCase().includes(query)));
+  const pageSize = 30;
+  const last = Math.max(0, Math.ceil(matches.length / pageSize) - 1);
+  clientPage = Math.min(clientPage, last);
+  const rows = matches.slice(clientPage * pageSize, (clientPage + 1) * pageSize).map((client) => [
     `<strong>${e(client.name)}</strong>`, `<a class="map-link" href="tel:${e(client.phone)}">${e(client.phone)}</a>`,
     e(client.email || '—'), e(client.category || '—'), e(client.postal_address || '—'), e(client.notes || '—'),
     shoots().filter((task) => task.client_id === client.id).length,
@@ -662,7 +669,10 @@ function clientsPage() {
   ]);
   return `${heading('Clients', 'Find the owners, contacts, and notes for your shoots.', actionButton('Add client', 'new-client', 'user-plus'))}
     <section class="panel"><div class="operation-toolbar"><label>Search clients<input type="search" id="client-search" value="${e(clientSearch)}" placeholder="Name, mobile, email or category"></label></div>
-      ${rows.length ? table('Clients', ['Client', 'Mobile', 'Email', 'Category', 'Address', 'Notes', 'Shoots', 'Footage', 'Actions'], rows) :
+      ${rows.length ? table('Clients', ['Client', 'Mobile', 'Email', 'Category', 'Address', 'Notes', 'Shoots', 'Footage', 'Actions'], rows) +
+        (last ? `<div class="card-actions"><span>${clientPage * pageSize + 1}–${Math.min(matches.length, (clientPage + 1) * pageSize)} of ${matches.length}</span>
+          ${clientPage > 0 ? actionButton('Previous clients', 'previous-clients', 'arrow-left', 'secondary') : ''}
+          ${clientPage < last ? actionButton('Next clients', 'next-clients', 'arrow-right', 'secondary') : ''}</div>` : '') :
         empty(clientSearch ? 'No clients match your search.' : 'Add a client here or enter their details when scheduling a shoot.')}</section>`;
 }
 
@@ -1047,9 +1057,9 @@ function workTargetLabel() {
   return `${duration(required)} target · ${aboveTarget ? duration(aboveTarget) + ' above target' : remaining ? duration(remaining) + ' remaining' : 'Target met'}`;
 }
 
-async function request(path, body) {
+async function request(path, body, tag) {
   try {
-    return await workspaceRequest(path, body);
+    return await workspaceRequest(path, body, tag);
   } catch (error) {
     if (error.status === 401 && path !== 'login' && session?.actor) clearWorkspace({ actor: null });
     throw error;
@@ -1074,6 +1084,7 @@ function clearWorkspace(info) {
   loading = false;
   initialLoadError = false;
   snapshot = undefined;
+  stateTag = undefined;
   state = initialState();
   actorId = undefined;
   mobileDevice = undefined;
@@ -1098,6 +1109,7 @@ function clearWorkspace(info) {
   profileNote = undefined;
   workSync = undefined;
   clientSearch = '';
+  clientPage = 0;
   mobileMenu = false;
   if (dialog.open) dialog.close();
   clearTimeout(toastTimer);
@@ -1111,15 +1123,17 @@ async function refresh({ force = false } = {}) {
   const version = ++refreshVersion;
   loading = true;
   try {
-    const [fresh] = await Promise.all([request('state'), loadHrViews()]);
-    if (version !== refreshVersion) return;
+    const [response] = await Promise.all([request('state', undefined, force ? undefined : stateTag), loadHrViews()]);
+    if (version !== refreshVersion || response === null) return;
+    const { data: fresh, tag } = response;
+    stateTag = tag;
     if (actor()?.scope_revision !== fresh.actor.scope_revision ||
         JSON.stringify(actor()?.permissions ?? []) !== JSON.stringify(fresh.actor.permissions ?? [])) {
       reviewViews.reset();
       scopedViews.reset();
     }
     session = { actor: fresh.actor };
-    const fingerprint = JSON.stringify(fresh);
+    const fingerprint = tag ?? JSON.stringify(fresh);
     if (snapshot === fingerprint && !force) return;
     const oldIds = new Set(reminders().map((notice) => notice.task_id));
     const first = snapshot === undefined;
@@ -1192,14 +1206,30 @@ async function loadSession() {
 }
 
 function openDialog(title, subtitle, body) {
+  const wasOpen = dialog.open;
+  const previous = wasOpen && dialog.contains(document.activeElement) ? document.activeElement.dataset.action : undefined;
   delete dialog.dataset.taskId;
   delete dialog.dataset.workQueue;
   dialog.innerHTML = `<div class="dialog-inner"><div class="panel-head">
     <div><h2 id="dialog-title">${title}</h2>${subtitle ? `<p>${subtitle}</p>` : ''}</div>
     <button type="button" class="icon-button" aria-label="Close dialog" data-action="close">${icon('x')}</button>
   </div>${body}</div>`;
-  if (!dialog.open) dialog.showModal();
+  if (!wasOpen) dialog.showModal();
+  else (previous && dialog.querySelector(`[data-action="${CSS.escape(previous)}"]`) || dialog.querySelector('[data-action="close"]')).focus();
 }
+
+dialog.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab') return;
+  const items = [...dialog.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')]
+    .filter((item) => !item.disabled && item.tabIndex >= 0 && item.getClientRects().length);
+  const index = items.indexOf(document.activeElement);
+  const target = event.shiftKey && index <= 0 ? items.at(-1) :
+    !event.shiftKey && (index === -1 || index === items.length - 1) ? items[0] : null;
+  if (target) {
+    event.preventDefault();
+    target.focus();
+  }
+});
 
 function entryForm(kind, fields, label, cancel = true) {
   return `<form data-form="${kind}"><div class="form-grid">${fields}</div><p class="form-error" role="alert" hidden></p>
@@ -2192,6 +2222,11 @@ document.addEventListener('click', (event) => {
       break;
     case 'new-client': clientForm(); break;
     case 'edit-client': clientForm(state.clients.find((client) => client.id === id)); break;
+    case 'previous-clients': case 'next-clients':
+      clientPage += action === 'next-clients' ? 1 : -1;
+      render();
+      document.querySelector('#client-search')?.focus();
+      break;
     case 'new-task': taskForm(); break;
     case 'new-shoot': taskForm(null, 'shoot'); break;
     case 'add-shoot-site': addSiteRow(button.closest('.additional-shoot-sites')); break;
@@ -2395,6 +2430,7 @@ document.addEventListener('change', (event) => {
   }
   if (input.id === 'client-search') {
     clientSearch = input.value.trim();
+    clientPage = 0;
     render();
     document.getElementById(input.id)?.focus();
     return;
@@ -2667,6 +2703,11 @@ window.addEventListener('hashchange', () => {
   mobileMenu = false;
   if (dialog.open) dialog.close();
   render();
+  const pageTitle = main.querySelector('h1');
+  if (pageTitle) {
+    pageTitle.tabIndex = -1;
+    pageTitle.focus({ preventScroll: true });
+  }
   window.scrollTo(0, 0);
 });
 
@@ -2677,7 +2718,10 @@ export function startWorkspace({ restore } = {}) {
   } else if (restore) loadSession();
   navigator.serviceWorker?.register('/push-worker.js').catch(() => {});
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') restartLocationTracking();
+    if (document.visibilityState === 'visible') {
+      restartLocationTracking();
+      if (session?.actor && navigator.onLine) refresh().catch(() => {});
+    }
   });
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) restartLocationTracking();
@@ -2692,6 +2736,6 @@ export function startWorkspace({ restore } = {}) {
     if (offlineDeparture) syncOfflineDeparture();
     syncSavedWork();
     prepareOfflineDeparture();
-    if (!pending && !observing && session?.actor && navigator.onLine) refresh().catch(() => {});
+    if (!pending && !observing && session?.actor && navigator.onLine && document.visibilityState === 'visible') refresh().catch(() => {});
   }, 15000);
 }

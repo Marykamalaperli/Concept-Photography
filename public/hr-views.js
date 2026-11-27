@@ -122,7 +122,7 @@ export function createHrViews(ui) {
       ${manager() ? field('Employee', `<select id="hr-attendance-person">${options(employees(), person.id)}</select>`) : ''}</div>`;
     return `${heading('Attendance', 'Daily hours, time-change requests, and verified location records.')}
       <div class="hr-attendance-layout">${person.id === actor().id ? clockCard() : ''}${panel(attendanceMonth ? monthTitle(attendanceMonth) : 'Last 14 days',
-        controls + table('Daily attendance', ['Date', 'In', 'Out', 'Hours', 'Status', 'Tasks', ''], rows))}</div>
+        controls + table('Daily attendance', ['Date', 'In', 'Out', 'Hours', 'Status', 'Tasks', 'Time change'], rows))}</div>
       ${panel(person.id === actor().id ? 'My time-change requests' : 'Time-change requests', requestRows(requests), '', 'hr-section')}
       ${panel('Verified clock records', attendanceTable(personal(state().attendance, person.id), true), '', 'hr-section')}`;
   }
@@ -427,6 +427,8 @@ export function createHrViews(ui) {
     const values = state().hrSettings;
     const number = (label, name, value, min, max) => field(label,
       `<input name="${name}" type="number" min="${min}" max="${max}" required value="${value}">`);
+    const optionalDays = (label, name, value, min, placeholder) => field(label,
+      `<input name="${name}" type="number" min="${min}" max="3650" value="${e(value)}" placeholder="${placeholder}">`);
     const clock = (label, name, value, required = false) => field(label,
       `<input name="${name}" type="time" ${required ? 'required' : ''} value="${e(value)}">`);
     const switchField = (label, name, value) => field(label, `<select name="${name}">
@@ -434,7 +436,7 @@ export function createHrViews(ui) {
       <option value="false"${!value ? ' selected' : ''}>Disabled</option></select>`);
     const group = (title, fields) => `<fieldset class="full form-grid settings-fields"><legend>${title}</legend>${fields}</fieldset>`;
     const tomorrow = day(dayStart(today()) + dayLength);
-    openDialog('Business policy', 'Work rules apply from the selected date. GPS changes and the new-task evidence rule apply when saved.',
+    openDialog('Business policy', 'Work rules apply from the selected date. GPS, new-task evidence, and retention settings apply when saved.',
       entryForm('hr/settings', `
         ${field('Work policy effective from (IST)', `<input name="effectiveFrom" type="date" value="${tomorrow}" min="${today()}" required>`, true)}
         ${group('Working hours and leave',
@@ -460,6 +462,12 @@ export function createHrViews(ui) {
           clock('Daily plan deadline (IST)', 'planDeadline', values.plan_deadline, true) +
           number('Task reminder before finish, minutes', 'reminderMinutes', values.task_reminder_minutes, 0, 120) +
           switchField('Require attachments for new tasks', 'attachmentRequired', values.attachment_required))}
+        ${group('Data retention in days',
+          optionalDays('Removed attachments', 'removedFileDays', values.removed_file_days, 7, 'Server default') +
+          optionalDays('Local backups', 'backupDays', values.backup_days, 1, 'Server default') +
+          optionalDays('Precise GPS fixes from closed shifts', 'attendanceFixDays', values.attendance_fix_days, 30, 'Keep indefinitely') +
+          optionalDays('Detailed business audit metadata', 'auditDetailDays', values.audit_detail_days, 30, 'Keep indefinitely') +
+          '<p class="full hr-muted">Shift totals, verified sites and audit event summaries are retained. Older backups follow their own cleanup schedule.</p>')}
         ${field('Reason for change', '<input name="reason" maxlength="350">', true)}`, 'Save policy'));
   }
 

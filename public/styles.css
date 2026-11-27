@@ -295,7 +295,7 @@ table .tag{white-space:nowrap}
 .hr-attendance-layout td,.hr-attendance-layout th{padding:8px 7px}
 .hr-attendance-layout td:nth-child(-n+4){white-space:nowrap;font-variant-numeric:tabular-nums}
 .hr-calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--stroke);gap:1px;border:1px solid var(--stroke);border-radius:12px;overflow:hidden}
-.hr-calendar-weekday{background:#ede8e2;color:var(--muted);padding:8px 9px;font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+.hr-calendar-weekday{background:#ede8e2;color:#625b55;padding:8px 9px;font-size:11px;text-transform:uppercase;letter-spacing:.6px}
 .hr-calendar-day,.hr-calendar-blank{min-height:86px;padding:7px;background:white;min-width:0}
 .hr-calendar-day.today{background:#fff8f1}
 .hr-calendar-blank{background:#f0ede8}

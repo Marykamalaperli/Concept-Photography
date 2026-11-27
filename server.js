@@ -1,5 +1,8 @@
 import { createLocalFiles, fileStoragePath } from './lib/local-files.js';
 import { refreshStudioNotices } from './lib/studio-notices.js';
+import { createHash } from 'node:crypto';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 import { createServer } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -16,6 +19,7 @@ import { refreshReminders } from './lib/reminders.js';
 import { createCalendar } from './lib/calendar.js';
 import { createMobilePush } from './lib/mobile-push.js';
 import { refreshAttendanceGaps } from './lib/attendance-gaps.js';
+import { minimizeHistoricalDetails } from './lib/retention.js';
 
 if (process.platform !== 'win32') process.umask(0o077);
 
@@ -95,6 +99,27 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+const compress = promisify(gzip);
+
+async function sendState(req, res, payload) {
+  const body = JSON.stringify(payload);
+  const tag = 'W/"' + createHash('sha256').update(body).digest('base64url') + '"';
+  const headers = { 'Cache-Control': 'private, no-store', ETag: tag, Vary: 'Cookie, Accept-Encoding' };
+  if (req.headers['if-none-match'] === tag) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
+  const acceptsGzip = req.headers['accept-encoding']?.split(',').some((option) => {
+    const [format, quality = 'q=1'] = option.trim().split(';');
+    return format.trim().toLowerCase() === 'gzip' && Number(quality.trim().slice(2)) > 0;
+  });
+  const zipped = body.length > 4096 && acceptsGzip ? await compress(body) : null;
+  if (zipped) headers['Content-Encoding'] = 'gzip';
+  res.writeHead(200, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(zipped ?? body);
+}
+
 const handle = async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -125,6 +150,10 @@ const handle = async (req, res) => {
         req.clientAddress = forwarded;
       }
       const payload = await api(req, res, path);
+      if (path === '/api/state' && req.method === 'GET') {
+        await sendState(req, res, payload);
+        return;
+      }
       sendJson(res, 200, payload);
       return;
     }
@@ -177,8 +206,14 @@ setInterval(async () => {
   }
 }, 15000).unref();
 
-setInterval(() => files?.prune().catch((error) => console.error('Could not prune expired attachments.', error.code ?? error.name)),
-  60 * 60_000).unref();
+setInterval(async () => {
+  try {
+    await files?.prune();
+    await minimizeHistoricalDetails(db);
+  } catch (error) {
+    console.error('Could not apply retention settings.', error.code ?? error.name);
+  }
+}, 60 * 60_000).unref();
 
 server.listen(port, host, () => {
   const displayHost = host.includes(':') ? `[${host}]` : host;

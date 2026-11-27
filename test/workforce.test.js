@@ -157,7 +157,7 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
 
   function client() {
     let cookie;
-    return async (path, body, expected = 200, extraHeaders = {}) => {
+    return async (path, body, expected = 200, extraHeaders = {}, headersOnly = false) => {
       const headers = { ...extraHeaders, ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) };
       const response = await fetch(`${base}/api/${path}`, { headers, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
       const newCookie = response.headers.get('set-cookie');
@@ -165,9 +165,9 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
         assert.match(newCookie, /HttpOnly; SameSite=Strict/);
         cookie = newCookie.split(';')[0];
       }
-      const payload = await response.json();
+      const payload = expected === 304 ? null : await response.json();
       assert.equal(response.status, expected, JSON.stringify(payload));
-      return payload;
+      return headersOnly ? response.headers : payload;
     };
   }
 
@@ -201,6 +201,12 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   assert.ok(empty.actor.is_admin);
   assert.equal('password_hash' in empty.employees[0], false);
   assert.equal('password_hash' in empty.actor, false);
+  const workspaceHeaders = await admin('state', null, 200, {}, true);
+  const etag = workspaceHeaders.get('etag');
+  assert.ok(etag);
+  assert.match(workspaceHeaders.get('cache-control'), /no-store/);
+  assert.equal(await admin('state', null, 304, { 'If-None-Match': etag }), null);
+  await guest('state', null, 401, { 'If-None-Match': etag });
 
   const credentials = { email: 'staff@example.com', password: 'Employee test passphrase' };
   const photographer = await admin('employees', { ...credentials, name: 'Team Member', role: 'Photographer', phone: '+91 98765 43210' });
@@ -218,6 +224,7 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
   const secondStop = { ...office, latitude: 17.391 };
   const maps = (location) => `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
   await admin('office', { name: 'Office', mapsUrl: maps(office) }, 403, { Origin: 'https://other.example.com' });
+  await admin('office', { name: 'Office', mapsUrl: maps(office) }, 403, { 'Sec-Fetch-Site': 'cross-site' });
   await admin('office', { name: 'Office', mapsUrl: maps(office) });
 
   const createShoot = {

@@ -65,7 +65,7 @@ async function snapshot(source, target, sourceDirectory = fileStoragePath(source
     } finally {
       db.close();
     }
-    verifyDatabase(temporary);
+    const { schema } = verifyDatabase(temporary);
     const attachments = join(staging, 'attachments');
     const count = await verifyAttachments(temporary, sourceDirectory, attachments);
     const targetDirectory = fileStoragePath(target);
@@ -81,10 +81,23 @@ async function snapshot(source, target, sourceDirectory = fileStoragePath(source
       if (count) await rm(targetDirectory, { recursive: true, force: true });
       throw error;
     }
+    return { schema, attachments: count };
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
-  return target;
+}
+
+function recordRecovery(target, action, details) {
+  const db = new DatabaseSync(target);
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'business_audit'").get()) {
+      db.prepare('INSERT INTO business_audit(actor_id, record_id, subject, action, occurred_at, details) VALUES (NULL, 1, ?, ?, ?, ?)')
+        .run('database recovery', action, Date.now(), JSON.stringify(details));
+    }
+    return details.schema >= 27 ? db.prepare('SELECT backup_days FROM hr_settings WHERE id = 1').get()?.backup_days : null;
+  } finally {
+    db.close();
+  }
 }
 
 export async function createBackup(source, directory, retentionDays = 30, sourceDirectory = fileStoragePath(source)) {
@@ -94,11 +107,12 @@ export async function createBackup(source, directory, retentionDays = 30, source
   const now = new Date();
   const stamp = now.toISOString().replaceAll(':', '-');
   const target = resolve(directory, `workspace-${stamp}-${randomUUID()}.sqlite`);
-  await snapshot(source, target, sourceDirectory);
+  const copy = await snapshot(source, target, sourceDirectory);
+  const effectiveDays = recordRecovery(target, 'backup verified', copy) ?? retentionDays;
   const backupName = /^workspace-(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2}\.\d{3}Z)-[a-f0-9-]{36}\.sqlite$/;
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const date = entry.isFile() && backupName.exec(entry.name);
-    if (date && Date.parse(`${date[1]}:${date[2]}:${date[3]}`) < now - retentionDays * 86_400_000) {
+    if (date && Date.parse(`${date[1]}:${date[2]}:${date[3]}`) < now - effectiveDays * 86_400_000) {
       await rm(join(directory, entry.name));
       await rm(fileStoragePath(join(directory, entry.name)), { recursive: true, force: true });
     }
@@ -108,7 +122,10 @@ export async function createBackup(source, directory, retentionDays = 30, source
 
 export async function restoreBackup(source, destination) {
   verifyDatabase(source);
-  return snapshot(source, resolve(destination));
+  const target = resolve(destination);
+  const copy = await snapshot(source, target);
+  recordRecovery(target, 'restore verified', copy);
+  return target;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

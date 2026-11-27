@@ -10,9 +10,10 @@ export function workspaceAddress(value) {
   return url;
 }
 
-export async function workspaceRequest(path, body) {
+export async function workspaceRequest(path, body, stateTag) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
+  if (path === 'state' && stateTag) headers['If-None-Match'] = stateTag;
   let response;
   let payload;
   try {
@@ -22,6 +23,7 @@ export async function workspaceRequest(path, body) {
       credentials: 'same-origin',
       ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
     });
+    if (path === 'state' && response.status === 304) return null;
     payload = await response.json();
   } catch {
     throw new Error('The studio workspace could not be reached. Try again.');
@@ -32,7 +34,7 @@ export async function workspaceRequest(path, body) {
     if (Array.isArray(payload?.conflicts)) error.conflicts = payload.conflicts;
     throw error;
   }
-  return payload;
+  return path === 'state' ? { data: payload, tag: response.headers.get('ETag') } : payload;
 }
 
 export function accessView({ title, description, content }) {
