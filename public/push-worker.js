@@ -1,5 +1,23 @@
-self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+const cacheName = 'concept-offline-v1';
+const offlinePage = new URL('offline.html', self.registration.scope);
+
+self.addEventListener('install', (event) => event.waitUntil((async () => {
+  await (await caches.open(cacheName)).add(offlinePage.href);
+  await self.skipWaiting();
+})()));
+self.addEventListener('activate', (event) => event.waitUntil((async () => {
+  const keys = await caches.keys();
+  await Promise.all(keys.filter((key) => key.startsWith('concept-offline-') && key !== cacheName)
+    .map((key) => caches.delete(key)));
+  await self.clients.claim();
+})()));
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  if (request.mode !== 'navigate' || !request.url.startsWith(self.registration.scope)) return;
+  event.respondWith(fetch(request).catch(async () => (await caches.match(offlinePage.href)) ??
+    new Response('The workspace is offline.', { status: 503 })));
+});
 
 self.addEventListener('push', (event) => {
   let data;

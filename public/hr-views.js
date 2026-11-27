@@ -371,13 +371,15 @@ export function createHrViews(ui) {
   }
 
   function settingsForm() {
-    const { work_start, work_end, week_off, monthly_leave } = state().hrSettings;
+    const { work_start, work_end, week_off, monthly_leave, required_minutes, verification_grace_minutes } = state().hrSettings;
     openDialog('Attendance & leave settings', 'Office hours are shown to staff. The weekly day off and leave allowance apply to attendance reports.',
       entryForm('hr/settings', `
         ${field('Office opens (IST)', `<input name="workStart" type="time" value="${e(work_start)}">`)}
         ${field('Office closes (IST)', `<input name="workEnd" type="time" value="${e(work_end)}">`)}
         ${field('Weekly day off', `<select name="weekOff">${options(weekdays.map((label, index) => [index, label]), week_off)}</select>`)}
-        ${field('Casual days earned per month', `<input type="number" name="monthlyLeave" min="0" max="31" required value="${monthly_leave}">`)}`, 'Save settings'));
+        ${field('Casual days earned per month', `<input type="number" name="monthlyLeave" min="0" max="31" required value="${monthly_leave}">`)}
+        ${field('Required working minutes per day', `<input type="number" name="requiredMinutes" min="0" max="1440" required value="${required_minutes}">`)}
+        ${field('GPS grace period (minutes)', `<input type="number" name="verificationGraceMinutes" min="2" max="60" required value="${verification_grace_minutes}">`)}`, 'Save settings'));
   }
 
   function holidayForm(date) {
@@ -459,6 +461,16 @@ export function createHrViews(ui) {
     todayClock() {
       const correction = hrRequests('time').find((request) => request.status === 'approved' && request.day_from === today());
       return elapsedClock(timeForDay(personal(state().attendance), today(), Date.now(), correction).total);
+    },
+    workTarget() {
+      const date = today();
+      const { hrSettings, holidays, attendance } = state();
+      const leave = hrRequests('leave').find((request) => request.status === 'approved' && request.day_from <= date && request.day_to >= date);
+      const count = leave ? (leave.leave_type === 'half' ? 0.5 : 1) : 0;
+      const required = isDayOff(date, hrSettings, holidays) ? 0 : hrSettings.required_minutes * (1 - count) * 60_000;
+      const correction = hrRequests('time').find((request) => request.status === 'approved' && request.day_from === date);
+      const { total } = timeForDay(personal(attendance), date, Date.now(), correction);
+      return { required, remaining: Math.max(0, required - total), aboveTarget: Math.max(0, total - required) };
     },
     timeRequestButton,
     officeHours() {

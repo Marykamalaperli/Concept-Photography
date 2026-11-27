@@ -40,7 +40,8 @@ h1,h2,h3{font-family:Manrope,Inter,sans-serif}
 main{padding:28px 32px 36px;max-width:1550px;margin:auto}
 .loading,.empty{color:var(--muted);padding:24px 0}
 .page-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
-.page-head h1{font-size:29px;font-weight:800;letter-spacing:-1px;line-height:1.2}
+.page-head h1{font-size:28px;font-weight:750;letter-spacing:-.7px;line-height:1.2}
+.dashboard-date{color:var(--muted);margin:0 0 14px;font-size:12px}
 .page-head p{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.5}
 .secondary{background:#fff;color:var(--ink);border-color:var(--stroke)}
 .secondary:hover{background:var(--paper)}
@@ -128,6 +129,17 @@ dialog::backdrop{background:#1c171480}
 @media(max-width:380px){.coordinate-fields{grid-template-columns:1fr}}
 
 .profile-head{pointer-events:auto}
+button.profile-head{min-height:42px;text-align:left;padding:3px 7px;border-color:transparent}
+.profile-head span.profile-name,.profile-head span.profile-role{display:block}
+.top-actions,button.profile-head,.profile-head>span:last-child{min-width:0}
+.top-actions>.icon-button,.breadcrumb>.icon-button{flex:none}
+.profile-head span.profile-name,.profile-head span.profile-role{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:650px){
+  .profile-head span.profile-role{display:none}
+  .breadcrumb{min-width:0;max-width:56%}
+  .breadcrumb strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
+@media(max-width:380px){.profile-head span.profile-name{display:none}}
 .stack{display:grid;gap:15px}
 .row-tags{display:flex;align-items:center;gap:5px;justify-content:flex-end;flex-wrap:wrap}
 .row-end{margin-left:auto}

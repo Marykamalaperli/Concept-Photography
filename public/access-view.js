@@ -56,11 +56,11 @@ export function accessView({ title, description, content }) {
   </div>`;
 }
 
-export function passwordField({ id, label = 'Password', newPassword = false, required = true }) {
+export function passwordField({ id, label = 'Password', name = 'password', newPassword = false, required = true }) {
   return `<div class="auth-password full">
     <label for="${id}">${label}</label>
     <span class="auth-input with-toggle">${accessIcon('lock-keyhole')}
-      <input id="${id}" name="password" type="password" autocomplete="${newPassword ? 'new-password' : 'current-password'}"
+      <input id="${id}" name="${name}" type="password" autocomplete="${newPassword ? 'new-password' : 'current-password'}"
         maxlength="128" ${newPassword ? 'minlength="12"' : 'placeholder="Enter your password"'}
         autocapitalize="none" spellcheck="false" ${required ? 'required' : ''}>
       <button type="button" class="password-toggle" data-password-toggle aria-controls="${id}"

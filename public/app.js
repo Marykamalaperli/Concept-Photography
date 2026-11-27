@@ -57,7 +57,8 @@ const categories = {
 };
 
 const initialState = () => ({
-  hrSettings: { monthly_leave: 2, week_off: 0 }, holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [],
+  hrSettings: { monthly_leave: 2, week_off: 0, required_minutes: 480, verification_grace_minutes: 5 },
+  holidays: [], hrRequests: [], workLogs: [], payslips: [], announcements: [], attendanceGaps: [],
   office: null, employees: [], tasks: [], sessions: [], attendance: [], reminders: [], clients: [], requests: [], openWork: [], payments: [], expenses: [] });
 let state = initialState();
 let session = null;
@@ -197,7 +198,8 @@ function renderChrome() {
     </div>
     <div class="top-actions">
       <a href="#notifications" class="icon-button" aria-label="Notifications${unread ? `, ${unread} unread` : ''}">${icon('bell')}${unread ? '<span class="bell-dot"></span>' : ''}</a>
-      <div class="profile profile-head">${avatar(person)}<div><div class="profile-name">${e(person.name)}</div><div class="profile-role">${e(person.role)}</div></div></div>
+      <button type="button" class="profile profile-head btn secondary" aria-label="My profile" data-action="profile">${avatar(person)}
+        <span><span class="profile-name">${e(person.name)}</span><span class="profile-role">${e(person.role)}</span></span></button>
       <button type="button" class="icon-button" aria-label="Sign out" title="Sign out" data-action="sign-out">${icon('log-out')}</button>
     </div>`;
 }
@@ -277,11 +279,7 @@ function dashboard() {
   const { received, outstanding, expenses, net } = totals();
   return `
     ${heading('Admin Dashboard', 'Manage the studio’s people, shoots, and finances.', actionButton('Schedule shoot', 'new-shoot', 'plus'))}
-    <section class="hero" aria-label="Studio overview">
-      <div class="hero-date">${icon('calendar-days')} ${studioDate.format(now)}</div>
-      <h2>Welcome, ${e(actor().name.split(/\s+/)[0])}</h2>
-      <p>Concept Photography studio overview</p>
-    </section>
+    <p class="dashboard-date">${studioDate.format(now)}</p>
     ${metrics([
       ['Employees', state.employees.filter((person) => !person.is_admin).length, 'users', 'peach'],
       ['Upcoming shoots', upcoming.filter((task) => task.category === 'Photo shoot').length, 'calendar-days', 'lavender'],
@@ -291,6 +289,7 @@ function dashboard() {
     <div class="dashboard-grid">
       <section class="panel">
         <div class="panel-head"><div><h2>Upcoming schedule</h2><p>Assigned work appears first.</p></div>${viewLink('schedule', 'View schedule')}</div>
+        ${state.attendanceGaps.some((gap) => gap.resolved_at === null) ? `<p class="location-watch">Location verification is interrupted for ${state.attendanceGaps.filter((gap) => gap.resolved_at === null).length} active shifts. ${viewLink('attendance', 'Review attendance')}</p>` : ''}
         ${upcoming.length ? upcoming.slice(0, 5).map(scheduleRow).join('') : empty('No upcoming shoots or tasks.')}
       </section>
       <div class="stack">${officeCard()}
@@ -319,6 +318,7 @@ function clockCard() {
     <header class="hr-panel-head"><h2>Time clock</h2>${shift ? tag('Checked in', 'sage') : tag('Checked out', 'neutral')}</header>
     <div class="hr-panel-body">
       <p class="hr-time-label">Today’s hours</p><div class="hr-timer" id="today-hours">${hrViews.todayClock()}</div>
+      <p class="hr-muted" id="work-target">${workTargetLabel()}</p>
       ${!shift && sites.length ? `<label class="clock-site">Check-in site
         <select id="clock-target">
           ${state.office ? '<option value="">' + e(state.office.name) + '</option>' : ''}
@@ -359,11 +359,14 @@ function attendanceTable(records, full = false) {
   </tr></thead><tbody>${records.map((shift) => {
     const person = employee(shift.employee_id);
     const siteName = shift.site ? JSON.parse(shift.site).name : '';
+    const gap = state.attendanceGaps.find((entry) => entry.attendance_id === shift.id);
     return `<tr><td><div class="inline">${avatar(person)}<div><strong>${e(person?.name)}</strong><small>${e(person?.role)}</small></div></div></td>
       <td>${time(shift.clock_in)}<small>${shortDate.format(shift.clock_in)}${shift.in_reason === 'geofence' ? ' · Auto return' : ''}</small></td>
-      <td>${shift.clock_out ? `${time(shift.clock_out)}<small>${shortDate.format(shift.clock_out)}${shift.out_reason === 'geofence' ? ' · Left site' : ''}</small>` : '—'}</td>
+      <td>${shift.clock_out ? `${time(shift.clock_out)}<small>${shortDate.format(shift.clock_out)}${shift.out_reason === 'geofence' ? ' · Left site' :
+        shift.out_reason === 'account-deactivated' ? ' · Account deactivated' : ''}</small>` : '—'}</td>
       <td>${siteName ? `<strong>${e(siteName)}</strong><br>` : ''}${locationCell(shift.in_location)}</td>${full ? `<td>${locationCell(shift.out_location)}</td>` : ''}
-      <td>${full && shift.clock_out ? duration(shift.clock_out - shift.clock_in) : shift.clock_out ? tag('Clocked out', 'neutral') : tag('Clocked in', 'sage')}</td></tr>`;
+      <td>${full && shift.clock_out ? duration(shift.clock_out - shift.clock_in) : shift.clock_out ? tag('Clocked out', 'neutral') : tag('Clocked in', 'sage')}
+        ${gap ? `<small>${gap.resolved_at === null ? 'Location unverified since' : 'Location gap began at'} ${time(gap.start_at)} IST</small>` : ''}</td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -387,13 +390,14 @@ function teamPage() {
     `<div class="inline">${avatar(person)}<div><strong>${e(person.name)}</strong><small>${e(person.role)}</small></div></div>`,
     e(person.email),
     e(person.phone || '—'),
-    person.has_login ? tag('Login set', 'sage') : tag('Credentials needed', 'sand'),
+    person.deactivated ? tag('Inactive', 'neutral') : person.has_login ? tag('Login set', 'sage') : tag('Credentials needed', 'sand'),
     ...(state.calendarFeeds ? [calendarFeedStatus(person.id)] : []),
     shiftFor(person.id) ? tag('Clocked in', 'sage') : tag('Clocked out', 'neutral'),
     state.tasks.filter((task) => assignedTo(task, person.id) && !task.completed_at && task.shoot_status === 'booked').length,
     actionButton('Edit employee', 'edit-employee', 'pencil', 'secondary', person.id),
   ]);
-  return `${heading('Employees', 'Manage employee profiles and sign-in credentials.', actionButton('Add employee', 'new-employee', 'user-plus'))}
+  return `${heading('Employees', 'Manage profiles and sign-in credentials.', `<div class="card-actions">
+    ${actionButton('Access history', 'access-audit', 'list', 'secondary')}${actionButton('Add employee', 'new-employee', 'user-plus')}</div>`)}
     <section class="panel">${rows.length ? table('Employee directory', ['Employee', 'Sign-in email', 'Mobile', 'Credentials', ...(state.calendarFeeds ? ['Calendar'] : []), 'Attendance', 'Open assignments', 'Actions'], rows) : empty('Add an employee to create their login and assign their first shoot.')}</section>`;
 }
 
@@ -778,12 +782,21 @@ function tick() {
     return;
   }
   processLocation();
+  sampleActiveShift();
   const hours = document.querySelector('#today-hours');
   if (hours) hours.textContent = hrViews.todayClock();
+  const target = document.querySelector('#work-target');
+  if (target) target.textContent = workTargetLabel();
   document.querySelectorAll('[data-elapsed]').forEach((element) => {
     const task = state.tasks.find((item) => item.id === Number(element.dataset.elapsed));
     if (task) element.textContent = elapsed(task);
   });
+}
+
+function workTargetLabel() {
+  const { required, remaining, aboveTarget } = hrViews.workTarget();
+  if (!required) return 'No working-hours target today.';
+  return `${duration(required)} target · ${aboveTarget ? duration(aboveTarget) + ' above target' : remaining ? duration(remaining) + ' remaining' : 'Target met'}`;
 }
 
 async function request(path, body) {
@@ -920,6 +933,29 @@ function entryForm(kind, fields, label) {
   </form>`;
 }
 
+function profileForm(note) {
+  openDialog('My profile', e(actor().email), `
+    ${actionButton('Change password', 'change-password', 'key-round', 'secondary')}
+    ${entryForm('profile/notes', `<label class="full">Private notepad<textarea name="note" rows="6" maxlength="6000">${e(note)}</textarea></label>`, 'Save notes')}
+  `);
+}
+
+function passwordForm() {
+  openDialog('Change password', 'You’ll sign in again after saving.', entryForm('profile/password', `
+    ${passwordField({ id: 'old-password', name: 'currentPassword', label: 'Current password' })}
+    ${passwordField({ id: 'new-password', label: 'New password', newPassword: true })}
+  `, 'Save password'));
+}
+
+function accessForm(person) {
+  const active = Boolean(person.deactivated);
+  openDialog(active ? 'Activate account' : 'Deactivate account', e(person.name), entryForm('employees/access', `
+    <input type="hidden" name="id" value="${person.id}">
+    <input type="hidden" name="active" value="${active}">
+    <p class="full">${active ? 'The employee will be able to sign in again.' : 'This ends active sessions and stops any running attendance and task timers. Their records stay available.'}</p>
+  `, active ? 'Activate account' : 'Deactivate account'));
+}
+
 
 function employeeForm(person) {
   const needsPassword = !person?.has_login;
@@ -1020,7 +1056,8 @@ function taskForm(task, type = 'all', sourceShoot = null) {
   const isShoot = category === 'Photo shoot';
   const completed = isShoot && Boolean(task?.completed_at);
   const isOpen = Boolean(task?.is_open);
-  const employees = state.employees.filter((person) => person.has_login || person.is_admin);
+  const employees = state.employees.filter((person) => (person.has_login || person.is_admin) &&
+    (!person.deactivated || task?.employee_id === person.id || task?.crew?.some((member) => member.employee_id === person.id)));
   const staff = employees.filter((person) => !person.is_admin);
   const selected = (isOpen ? null : task?.employee_id) ?? staff[0]?.id ?? actorId;
   const clientId = task?.client_id;
@@ -1135,6 +1172,7 @@ function expenseForm(expense) {
 
 const locationOptions = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 };
 const observationRetryDelay = 3_000;
+const verificationInterval = 60_000;
 
 function toFix({ coords, timestamp }) {
   return { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, capturedAt: timestamp };
@@ -1172,7 +1210,7 @@ function trackingTarget() {
   const site = current
     ? (latest.site ? JSON.parse(latest.site) : null)
     : returnSite(latest, state.office, state.tasks.filter((task) => !task.is_open), actorId, Date.now());
-  return site ? { site, current, shiftId: latest.id } : null;
+  return site ? { site, current, shiftId: latest.id, verifiedAt: latest.last_verified_at ?? latest.clock_in } : null;
 }
 
 function setWatchStatus(message) {
@@ -1220,12 +1258,35 @@ function updateTracking() {
     }, locationOptions);
   }
   const action = target.current ? `automatic clock-out from ${target.site.name}` : `automatic clock-in when you return to ${target.site.name}`;
-  if (navigator.onLine === false) setWatchStatus('Waiting for an internet connection to update attendance.');
+  if (state.attendanceGaps.some((gap) => gap.attendance_id === target.shiftId && gap.resolved_at === null)) {
+    setWatchStatus('Location unverified. Keep the workspace open and allow GPS to resume verification.');
+  } else if (navigator.onLine === false) setWatchStatus('Waiting for an internet connection to update attendance.');
   else if (watcher.retryAt > Date.now()) setWatchStatus('Could not update attendance. Retrying automatically.');
   else if (watcher.error) setWatchStatus(watcher.error);
   else if (!watcher.fix) setWatchStatus(`Waiting for GPS for ${action}.`);
   else if (presenceAt(watcher.fix, target.site) === 'uncertain') setWatchStatus('Automatic tracking is waiting for a clearer GPS signal.');
   else setWatchStatus(`Tracking active for ${action}. Last GPS reading at ${time(watcher.fix.capturedAt)} IST. Keep the workspace open and your phone awake.`);
+}
+
+function sampleActiveShift() {
+  const watch = watcher;
+  const shift = latestShift();
+  const now = Date.now();
+  if (!watch || readingLocation || pending || observing || navigator.onLine === false || document.visibilityState !== 'visible' ||
+      shift?.clock_out !== null || now < Math.max(watch.sampleAfter ?? 0, (shift.last_verified_at ?? shift.clock_in) + verificationInterval)) return;
+  watch.sampleAfter = now + verificationInterval;
+  navigator.geolocation.getCurrentPosition((position) => {
+    if (watcher !== watch) return;
+    watch.fix = toFix(position);
+    watch.error = '';
+    lastFix = { location: watch.fix, employeeId: watch.employeeId };
+    updateTracking();
+    processLocation();
+  }, (error) => {
+    if (watcher !== watch) return;
+    watch.error = locationError(error);
+    updateTracking();
+  }, locationOptions);
 }
 
 function restartLocationTracking() {
@@ -1273,12 +1334,15 @@ async function processLocation() {
     watch.retryAt = 0;
     updateTracking();
   }
-  if (presenceAt(location, target.site) !== (target.current ? 'outside' : 'inside')) return;
+  const presence = presenceAt(location, target.site);
+  const verify = target.current && presence === 'inside' &&
+    Date.now() >= Math.max(target.verifiedAt, watch.verifiedAt ?? 0) + verificationInterval;
+  if (!verify && presence !== (target.current ? 'outside' : 'inside')) return;
   observing = true;
   try {
     let shift;
     try {
-      shift = await request('attendance', { shiftId: target.shiftId, action: 'observe', location });
+      shift = await request('attendance', { shiftId: target.shiftId, action: verify ? 'verify' : 'observe', location });
     } catch (error) {
       if (watcher !== watch) return;
       if (!error.status || error.status >= 500 || error.status === 429) {
@@ -1291,6 +1355,13 @@ async function processLocation() {
       return;
     }
     if (actorId !== employeeId) return;
+    if (verify) {
+      watch.verifiedAt = Date.now();
+      if (state.attendanceGaps.some((gap) => gap.attendance_id === target.shiftId && gap.resolved_at === null)) {
+        await refresh({ force: true }).catch(() => {});
+      }
+      return;
+    }
     await refreshAfterSave();
     if (shift && actorId === employeeId) {
       showToast(target.current ? `Clocked out automatically after leaving ${target.site.name}.`
@@ -1334,6 +1405,7 @@ const savedMessages = {
   'hr/holidays': 'Holiday saved.', 'hr/payslips': 'Payslip saved.', 'hr/announcements': 'Announcement saved.',
   'hr/work-logs': 'Work logged.', 'task-action': 'Task blocked.', payments: 'Payment recorded.', expenses: 'Expense saved.',
   'payment-due': 'Payment due date saved.', 'request-decisions': 'Request approved.',
+  'profile/notes': 'Notes saved.', 'employees/access': 'Account access updated.',
 };
 
 function clockAction(button, taskId) {
@@ -1403,7 +1475,26 @@ document.addEventListener('click', (event) => {
     case 'close': dialog.close(); break;
     case 'details': taskDialog(task()); break;
     case 'new-employee': employeeForm(); break;
-    case 'edit-employee': employeeForm(employee(id)); break;
+    case 'edit-employee': {
+      const person = employee(id);
+      employeeForm(person);
+      dialog.querySelector('.dialog-actions').insertAdjacentHTML('afterbegin', actionButton(
+        person.deactivated ? 'Activate account' : 'Deactivate account', 'edit-employee-access', 'user-round', 'secondary', id));
+      break;
+    }
+    case 'edit-employee-access': accessForm(employee(id)); break;
+    case 'profile':
+      mutate(button, async () => profileForm((await request('profile')).note));
+      break;
+    case 'change-password': passwordForm(); break;
+    case 'access-audit':
+      mutate(button, async () => {
+        const audit = await request('access-audit');
+        openDialog('Access history', 'Recent account activity.', table('Access history', ['Event', 'Employee', 'Changed by', 'Time (IST)'],
+          audit.map((entry) => [e(entry.action), e(entry.subject || '—'), e(entry.performer || '—'),
+            `${shortDate.format(entry.occurred_at)} · ${time(entry.occurred_at)}`])));
+      });
+      break;
     case 'new-client': clientForm(); break;
     case 'edit-client': clientForm(state.clients.find((client) => client.id === id)); break;
     case 'new-task': taskForm(); break;
@@ -1647,6 +1738,7 @@ document.addEventListener('submit', (event) => {
   errorNote.hidden = true;
   const fields = new FormData(form);
   const data = Object.fromEntries(fields);
+  if (kind === 'employees/access') data.active = data.active === 'true';
   if (kind === 'tasks') {
     if (data.category === 'Photo shoot' || data.parentShootId) {
       data.startAt = `${data.shootFrom}:00+05:30`;
@@ -1685,6 +1777,13 @@ document.addEventListener('submit', (event) => {
       const result = await request(kind, data);
       if (kind === 'login') {
         await finishSignIn(result);
+        return;
+      }
+      if (kind === 'profile/password') {
+        await request('logout', {}).catch(() => {});
+        history.replaceState(null, '', location.pathname);
+        clearWorkspace({ actor: null });
+        showToast('Password updated. Sign in with your new password.');
         return;
       }
       const ownsDialog = dialog.open && dialog.contains(form);
@@ -1728,6 +1827,7 @@ window.addEventListener('hashchange', () => {
 
 export function startWorkspace({ restore } = {}) {
   if (restore) loadSession();
+  navigator.serviceWorker?.register('/push-worker.js').catch(() => {});
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') restartLocationTracking();
   });

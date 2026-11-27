@@ -13,6 +13,7 @@ import { createApi } from './lib/workspace-api.js';
 import { refreshReminders } from './lib/reminders.js';
 import { createCalendar } from './lib/calendar.js';
 import { createMobilePush } from './lib/mobile-push.js';
+import { refreshAttendanceGaps } from './lib/attendance-gaps.js';
 
 process.umask(0o077);
 
@@ -57,6 +58,7 @@ const assets = new Map([
   ['/access-view.js', ['public/access-view.js', 'text/javascript']],
   ['/mobile-alerts.js', ['public/mobile-alerts.js', 'text/javascript']],
   ['/push-worker.js', ['public/push-worker.js', 'text/javascript']],
+  ['/offline.html', ['public/offline.html', 'text/html']],
   ['/manifest.webmanifest', ['public/manifest.webmanifest', 'application/manifest+json']],
   ['/concept-logo.png', ['public/concept-logo.png', 'image/png']],
   ['/brand-mark.png', ['public/brand-mark.png', 'image/png']],
@@ -142,6 +144,7 @@ setInterval(async () => {
   checkingReminders = true;
   try {
     await refreshReminders(db);
+    await refreshAttendanceGaps(db);
     await mobilePush?.dispatch(db);
   } catch (error) {
     console.error('Could not refresh work reminders.', error.code ?? error.name);

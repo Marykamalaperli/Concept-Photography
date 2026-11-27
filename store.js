@@ -278,5 +278,46 @@ export function openStore(db) {
       throw error;
     }
   }
+  if (db.prepare('PRAGMA user_version').get().user_version < 8) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        ALTER TABLE hr_settings ADD COLUMN required_minutes INTEGER NOT NULL DEFAULT 480 CHECK (required_minutes BETWEEN 0 AND 1440);
+        ALTER TABLE hr_settings ADD COLUMN verification_grace_minutes INTEGER NOT NULL DEFAULT 5 CHECK (verification_grace_minutes BETWEEN 2 AND 60);
+        ALTER TABLE attendance ADD COLUMN last_verified_at INTEGER;
+        CREATE TABLE attendance_gaps (
+          id INTEGER PRIMARY KEY, attendance_id INTEGER NOT NULL REFERENCES attendance(id),
+          start_at INTEGER NOT NULL, resolved_at INTEGER
+        ) STRICT;
+        CREATE UNIQUE INDEX attendance_open_gap ON attendance_gaps (attendance_id) WHERE resolved_at IS NULL;
+        PRAGMA user_version = 8;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  if (db.prepare('PRAGMA user_version').get().user_version < 9) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`
+        ALTER TABLE employees ADD COLUMN deactivated INTEGER NOT NULL DEFAULT 0 CHECK (deactivated IN (0, 1));
+        CREATE TABLE access_audit (
+          id INTEGER PRIMARY KEY, actor_id INTEGER REFERENCES employees(id), subject_id INTEGER REFERENCES employees(id),
+          action TEXT NOT NULL, occurred_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE INDEX access_audit_date ON access_audit(occurred_at DESC);
+        CREATE TABLE personal_notes (
+          employee_id INTEGER PRIMARY KEY REFERENCES employees(id), note TEXT NOT NULL, updated_at INTEGER NOT NULL
+        ) STRICT;
+        PRAGMA user_version = 9;
+        COMMIT;
+      `);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   return db;
 }
