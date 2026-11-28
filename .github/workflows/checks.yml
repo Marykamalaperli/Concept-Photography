@@ -20,6 +20,7 @@ permissions:
 jobs:
   checks:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -30,7 +31,27 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm test
+      - if: runner.os == 'Linux'
+        run: npm test
+      - if: runner.os == 'Windows'
+        name: Run Windows tests
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $log = Join-Path $env:RUNNER_TEMP 'concept-test.log'
+          npm test *> $log
+          $testExitCode = $LASTEXITCODE
+          Get-Content $log
+          if ($testExitCode -ne 0) {
+            Add-Content $env:GITHUB_STEP_SUMMARY '### Windows regression test output'
+            Add-Content $env:GITHUB_STEP_SUMMARY '```text'
+            Get-Content $log -Tail 70 | Add-Content $env:GITHUB_STEP_SUMMARY
+            Add-Content $env:GITHUB_STEP_SUMMARY '```'
+            $detail = (Select-String -Path $log -Pattern 'Error:|Error \[|CategoryInfo|FullyQualifiedErrorId|cause:|not ok' | Select-Object -Last 8 | ForEach-Object Line) -join "`n"
+            $detail = $detail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error::Windows regression exit $testExitCode. $detail"
+            exit $testExitCode
+          }
       - if: runner.os == 'Linux'
         name: Audit dependencies
         run: npm audit --audit-level=high
