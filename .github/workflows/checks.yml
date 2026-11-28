@@ -3,7 +3,15 @@ name: Verify self-hosted workspace
 on:
   pull_request:
   push:
-    branches: [main, self-hosted-workspace-migration]
+    branches:
+      - main
+      - self-hosted-workspace-migration
+      - 'feature/**'
+      - 'fix/**'
+      - 'security/**'
+      - 'performance/**'
+      - 'documentation/**'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -23,6 +31,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - if: runner.os == 'Linux'
+        name: Audit dependencies
+        run: npm audit --audit-level=high
       - if: runner.os == 'Windows'
         name: Validate Windows scripts
         shell: pwsh

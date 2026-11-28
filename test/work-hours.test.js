@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { dayStart } from '../lib/hr-policy.js';
 import { dailyHours } from '../lib/work-hours.js';
+import { createWorksheetViews } from '../public/worksheet-views.js';
 
 const minute = 60_000;
 const date = '2026-11-30';
@@ -40,6 +41,33 @@ test('approved leave, holidays and time corrections apply without fabricating a 
   assert.equal(result.overtime / minute, 300);
   assert.equal(result.early, null);
   assert.equal(dailyHours({ ...input, holidays: [{ day: date }] }).required, 0);
+});
+
+test('open work periods affect only the dates they overlap', () => {
+  const followingDay = 24 * 60 * minute;
+  const input = { date, now: at(12) + followingDay, employee, settings, holidays: [],
+    attendance: [shift(at(9), at(17))] };
+  const historical = dailyHours({ ...input, periods: [period('travel', at(9) + followingDay, null)] });
+  assert.equal(historical.out, at(17));
+  assert.equal(historical.early, 60 * minute);
+  assert.equal(historical.travel, 0);
+
+  const overnight = dailyHours({ ...input, periods: [period('travel', at(23), null)] });
+  assert.equal(overnight.out, null);
+  assert.equal(overnight.travel, 60 * minute);
+});
+
+test('worksheet filter edits survive a redraw and clear when the session is reset', () => {
+  const worksheet = createWorksheetViews({
+    actor: () => ({ id: 7 }), manager: () => false, today: () => date,
+    e: (value) => value, heading: () => '', empty: () => '', entryForm: (_kind, fields) => fields,
+  });
+  worksheet.rememberFilters({ elements: { date: { value: '2026-11-27' }, period: { value: 'week' } } });
+  assert.match(worksheet.page(), /value="2026-11-27"/);
+  assert.match(worksheet.page(), /value="week" selected/);
+  assert.deepEqual(worksheet.scope(), { employeeId: 7, date, period: 'day' });
+  worksheet.reset();
+  assert.match(worksheet.page(), /value="day" selected/);
 });
 
 test('performance compares eligible work and skips approval, GPS, travel and revised schedule exceptions', async () => {

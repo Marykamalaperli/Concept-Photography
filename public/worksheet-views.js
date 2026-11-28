@@ -8,6 +8,7 @@ export function createWorksheetViews(ui) {
   const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, applyAction, empty, table, today, day, time, duration, money, chart } = ui;
   let report;
   let filters;
+  let draft;
   let version = 0;
 
   function scope() {
@@ -99,7 +100,7 @@ export function createWorksheetViews(ui) {
   }
 
   function page() {
-    const chosen = scope();
+    const chosen = draft ?? scope();
     const actions = report ? `<div class="card-actions">${actionButton('Add remark', 'worksheet-remark', 'pencil', 'secondary')}
       ${actionButton('Export CSV', 'worksheet-csv', 'download', 'secondary')}
       ${actionButton('Print or save PDF', 'worksheet-print', 'printer', 'secondary')}</div>` : '';
@@ -122,6 +123,11 @@ export function createWorksheetViews(ui) {
     filters = data;
     report = result;
     ui.render();
+  }
+
+  function rememberFilters(form) {
+    const { employeeId, date, period } = form.elements;
+    draft = { employeeId: employeeId?.value ?? actor().id, date: date.value, period: period.value };
   }
 
   function exportCsv() {
@@ -185,7 +191,7 @@ export function createWorksheetViews(ui) {
   };
 
   return {
-    page, actions, load, scope, reviewTable,
+    page, actions, load, scope, reviewTable, rememberFilters,
     clockDetails(shift, latest) {
       const active = state().workPeriods.find((period) => period.end_at == null);
       const hasShift = shift || latest?.resume_pending;
@@ -197,6 +203,6 @@ export function createWorksheetViews(ui) {
           (shift ? start('Start lunch', 'lunch') + start('Personal break', 'personal') : '') + start('Shoot travel', 'travel')}
       </div>${active ? `<p class="hr-muted">${labels[active.kind]} started at ${time(active.start_at)} IST.</p>` : ''}`;
     },
-    reset() { report = undefined; filters = undefined; version++; },
+    reset() { report = undefined; filters = undefined; draft = undefined; version++; },
   };
 }

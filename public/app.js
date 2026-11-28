@@ -2617,6 +2617,7 @@ document.addEventListener('change', (event) => {
     main.querySelector('#schedule-employee')?.focus();
   }
   const form = input.form;
+  if (form?.dataset.form === 'worksheet') worksheetViews.rememberFilters(form);
   if (input.id === 'permission-role') {
     const role = input.value;
     mutate(input, async () => reviewViews.roleSettings(await request('roles'), role));
