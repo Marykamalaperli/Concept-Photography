@@ -13,11 +13,13 @@ New-Item -ItemType Directory -Path C:\ConceptOffice -Force
 Set-Location C:\ConceptOffice
 git clone https://github.com/Marykamalaperli/Concept-Photography.git workspace
 Set-Location .\workspace
-git switch self-hosted-workspace-migration
+git checkout --detach v1.0.0-rc.1
 Set-ExecutionPolicy -Scope Process RemoteSigned
 .\scripts\install.ps1
 notepad .env
 ```
+
+Record the output of `git rev-parse HEAD` against the published candidate before installing. Keep the rehearsal database and backup paths separate from the eventual production installation. [Release notes](RELEASE_NOTES.md)
 
 Use a dedicated folder for the database and another for backups. Restrict their Windows ACLs and the ACLs for `.env` and TLS key files to the service account and designated administrators. For example, use `DATABASE_PATH=C:/ConceptPrivate/workforce.sqlite` and `BACKUP_DIRECTORY=D:/ConceptBackups` in `.env`. Create these volumes or folders only where appropriate for the office machine. Set `HOST=127.0.0.1` for the local rehearsal.
 

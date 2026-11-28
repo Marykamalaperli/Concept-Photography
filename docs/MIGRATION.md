@@ -6,7 +6,7 @@ This utility is for the controlled cutover phase. It reads a restricted export a
 
 Run `npm run migration:rehearse` from the checkout. The command generates a version 1 snapshot in a temporary directory, checks it with a dry run, imports it into a new database, and verifies a backup restored to a second file. It compares counts and cash totals, checks the original IDs and attendance duration, requires a new administrator password, and checks that an ordinary employee’s compatible password is preserved. Standard output contains only aggregate evidence. The temporary files are removed on completion.
 
-The expected report includes two employees, one attendance interval, 120,500 paise booked, 55,501 received, 1,999 spent, and 53,502 cash profit. This verifies the snapshot import and recovery path. The authorized hosted export and business reconciliation remain part of office acceptance.
+The expected report includes two employees, one attendance interval, 120,500 paise booked, 55,501 received, 1,999 spent, and 53,502 cash profit. Save the aggregate report with the reviewed candidate SHA. The authorized hosted export and business reconciliation remain part of office acceptance. [Release notes](RELEASE_NOTES.md)
 
 ## Export data for an approved cutover
 

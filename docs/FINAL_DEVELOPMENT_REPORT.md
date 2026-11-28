@@ -2,6 +2,10 @@
 
 The self-hosted admin and employee workspace is ready for a controlled office rehearsal. The frontend redesign began at `ada6b2f` on `self-hosted-workspace-migration` and used temporary SQLite databases and synthetic records. [Frontend comparison](https://github.com/Marykamalaperli/Concept-Photography/compare/ada6b2f...self-hosted-workspace-migration) · [Full branch comparison](https://github.com/Marykamalaperli/Concept-Photography/compare/main...self-hosted-workspace-migration?expand=1)
 
+## Office release candidate
+
+The production-readiness work is tracked as independent feature branches with per-feature and post-merge verification. It covers the attendance and worksheet fixes, guided Windows setup, GPS privacy, reliable shutdown and update recovery, and the synthetic import and restore rehearsal. The published `v1.0.0-rc.1` tag identifies the exact reviewed integration commit for the office rehearsal. [Release notes](RELEASE_NOTES.md) · [Branch tracker](BRANCH_TRACKER.md)
+
 ## Frontend redesign
 
 - The studio ledger design gives the public launcher and sign-in a stronger photographic composition. The admin dashboard puts upcoming shoots, review work, the duty register and cash position near the top. The employee dashboard puts live attendance, GPS status, breaks and work priorities within reach on a phone.

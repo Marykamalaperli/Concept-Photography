@@ -4,6 +4,7 @@ Use a fresh Windows rehearsal checkout, a new SQLite path and synthetic accounts
 
 ## 1. Office network and Windows preflight
 
+- [ ] Check out the published `v1.0.0-rc.1` tag and record the full SHA. Confirm the Ubuntu and Windows checks, run `npm.cmd run verify:release` locally, and save the synthetic migration reconciliation with the rehearsal record. [Release notes](RELEASE_NOTES.md) · [Branch tracker](BRANCH_TRACKER.md)
 - [ ] Confirm Node.js 24 or newer, available disk space and a separate authorized backup volume. Restrict database, attachment, backup, TLS and environment files with Windows ACLs. Use a limited Windows service account and configure the computer to remain available during employee access hours.
 - [ ] Install dependencies with `scripts\install.ps1` in the rehearsal checkout. Confirm its `.env` points to a new database and attachment folder. Verify the database opens after `scripts\start-server.ps1` and `scripts\health-check.ps1` pass. Compare existing production database and attachment paths before proceeding.
 - [ ] Use `Get-NetIPConfiguration` and the router to confirm the machine's LAN IP and gateway. Assign a DHCP reservation. Test the rehearsal hostname and port using `Resolve-DnsName` and `Test-NetConnection <hostname> -Port 443` from another LAN device.

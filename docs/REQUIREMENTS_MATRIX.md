@@ -188,3 +188,15 @@ All frontend verification uses a temporary SQLite rehearsal. The redesign starts
 | 22. Document applicable design guidance | Met | `docs/FRONTEND_DESIGN_SYSTEM.md` records decisions, tools, responsive rules, design evidence and limitations. |
 | 23. Design review package | Met | Before-and-after captures, measured verification, updated development report and review text. |
 | 24. Branch and deployment | Met | Reviewed development branch only. Office acceptance and production release continue in later phases. |
+
+## Feature-branch release sequence
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| Separate feature and integration branches | Met | Six named branches build from the last verified integration. Feature and merge SHAs and Actions are tracked. [Branch tracker](BRANCH_TRACKER.md) |
+| Review and production safety | Met | Development merges use required checks. Repository-level rules are checked before an authorized fallback merge. Main publication requires the separate office cutover approval. |
+| Windows setup and operations | Met for development | Isolated PowerShell checks verify setup, repeat configuration and simulated failed-update recovery. Actual Task Scheduler, Windows ACLs and HTTPS are acceptance checks. [Windows setup](INSTALLATION.md) |
+| Employee privacy and permission tests | Met for development | GPS disclosure is minimized and scoped access and quick revocation are covered. [Security audit](SECURITY_AUDIT.md) |
+| Synthetic migration and restore | Met | `npm run migration:rehearse` checks financial, credential, relationship and attendance reconciliation in a new SQLite file and restored copy. [Migration guide](MIGRATION.md) |
+| Exact rehearsal candidate | Published tag records the verified commit | `v1.0.0-rc.1` identifies the reviewed integration. [Release notes](RELEASE_NOTES.md) |
+| Office and production acceptance | Pending | Real office networking, staff devices, historical migration, recovery and owner sign-off remain on the acceptance checklist. [Office acceptance](PRODUCTION_ACCEPTANCE.md) |
