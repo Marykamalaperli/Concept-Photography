@@ -1,7 +1,7 @@
 import { dayLength, dayStart, studioDay, validDay } from './hr-policy.js';
 
 export function createOperationsViews(ui) {
-  const { state, actor, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time } = ui;
+  const { state, actor, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, employee } = ui;
   let selectedDate = '';
   let interval = 'day';
   const taskById = (id) => state().tasks.find((item) => item.id === id);
@@ -9,6 +9,7 @@ export function createOperationsViews(ui) {
   const selected = () => selectedDate || ui.today();
   const taskButton = (task) => actionButton(e(task.title), 'details', 'arrow-right', 'secondary', task.id);
   const categories = ['Planning', 'Editing', 'Studio', 'Other'];
+  const agendaDate = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'long' });
 
   function planEntry(entry = {}) {
     return `<fieldset class="full plan-entry form-grid" data-plan-entry>
@@ -79,14 +80,19 @@ export function createOperationsViews(ui) {
       if (!days.has(day)) days.set(day, []);
       days.get(day).push(task);
     }
-    return `<section class="panel">
+    return `<section class="panel planning-agenda">
       <div class="operation-toolbar">
         <label>Calendar starts on<input type="date" id="plan-calendar-date" value="${e(date)}"></label>
         <label>Calendar view<select id="plan-calendar-interval">${['day', 'week', 'month'].map((option) =>
           `<option value="${option}"${option === interval ? ' selected' : ''}>${status(option)}</option>`).join('')}</select></label>
       </div>
-      ${tasks.length ? [...days].map(([day, rows]) => `<div class="plan-calendar-day"><h2>${e(day)}</h2><ul class="plan-entries-list">${rows.map((task) =>
-        `<li><time>${time(task.start_at)}</time>${taskButton(task)}</li>`).join('')}</ul></div>`).join('') : empty('No assignments in this period.')}
+      ${tasks.length ? [...days].map(([date, rows]) => `<div class="plan-calendar-day">
+        <h2><time datetime="${date}">${agendaDate.format(dayStart(date))}</time></h2>
+        <ul class="planning-rows">${rows.map((task) => `<li><span>${time(task.start_at)}
+          <small>to ${time(task.start_at + task.estimate * 60_000)}</small></span><div>${taskButton(task)}
+          <small>${e(task.category)}${manager() && employee(task.employee_id) ? ' · ' + e(employee(task.employee_id).name) : ''}</small></div>
+          ${task.emergency ? '<span class="planning-flag">Emergency</span>' :
+            task.completed_at ? '<span class="planning-flag complete">Completed</span>' : ''}</li>`).join('')}</ul></div>`).join('') : empty('No assignments in this period.')}
     </section>`;
   }
 

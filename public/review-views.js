@@ -55,13 +55,15 @@ export function createReviewViews(ui) {
 
   function reviewRecord(kind, row, title, details) {
     const supported = kind === 'footage' && row.status === 'incident' ? ['returned'] : decisions[kind][2];
-    return `<article class="operation-record"><h3>${e(title)} · ${e(row.name)}</h3>${details}
+    return `<article class="operation-record review-record"><div><h3>${e(title)}</h3>
+      <p class="review-person">${e(row.name)}</p>${details}</div>
       <div class="card-actions">${supported.map((result) => `<button type="button" class="btn secondary" data-action="queued-review"
         data-value="${kind}:${result}" data-id="${row.id}">${labels[result]}</button>`).join('')}</div></article>`;
   }
 
   function section(title, items) {
-    return `<section class="panel"><div class="panel-head"><h2>${title}</h2></div>${items.length ? items.join('') : empty('Nothing to review.')}</section>`;
+    return `<section class="panel review-section"><div class="panel-head"><h2>${title}</h2>
+      <span class="attention-total">${items.length} pending</span></div>${items.length ? items.join('') : empty('Nothing to review.')}</section>`;
   }
 
   const evidence = (id) => id ? `<p><a class="text-link" href="/api/files/${e(id)}">Download evidence</a></p>` : '';

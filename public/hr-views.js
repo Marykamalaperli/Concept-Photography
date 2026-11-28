@@ -31,6 +31,7 @@ export function createHrViews(ui) {
   let attendancePerson = '';
   let shootMonth = '';
   let shootFilter = 'all';
+  let shootView = 'calendar';
   let taskFilter = 'all';
 
   const panel = (title, body, actions = '', className = '') => `<section class="panel hr-panel ${className}">
@@ -186,7 +187,9 @@ export function createHrViews(ui) {
   }
 
   function shootCalendar() {
-    const period = shootMonth || today().slice(0, 7);
+    const currentDay = today();
+    const currentPeriod = currentDay.slice(0, 7);
+    const period = shootMonth || currentPeriod;
     const start = period + '-01';
     const dates = dateRange(start, monthEnd(period, day));
     const visible = state().tasks.filter((task) => task.category === 'Photo shoot' &&
@@ -194,31 +197,58 @@ export function createHrViews(ui) {
       .sort((a, b) => a.start_at - b.start_at);
     const agenda = visible.filter((shoot) => bookingState(shoot) !== 'postponed' && day(shoot.start_at).startsWith(period));
     const postponed = visible.filter((shoot) => bookingState(shoot) === 'postponed');
+    const byDay = new Map();
+    for (const shoot of agenda) {
+      const date = day(shoot.start_at);
+      if (!byDay.has(date)) byDay.set(date, []);
+      byDay.get(date).push(shoot);
+    }
+    const holidays = new Map(state().holidays.map((item) => [item.day, item.name]));
     const trailing = (7 - (dates.length + weekday(start)) % 7) % 7;
     const days = dates.map((date) => {
-      const holiday = state().holidays.find((item) => item.day === date);
-      const shoots = agenda.filter((shoot) => day(shoot.start_at) === date);
-      return `<div class="hr-calendar-day ${date === today() ? 'today' : ''}">
+      const holiday = holidays.get(date);
+      const shoots = byDay.get(date) ?? [];
+      return `<div class="hr-calendar-day ${date === currentDay ? 'today' : ''}">
         <span class="hr-calendar-number" aria-label="${dayLabel(date)}">${Number(date.slice(8))}</span>
-        ${holiday ? `<span class="hr-calendar-holiday">${e(holiday.name)}</span>` : ''}
-        ${shoots.map((shoot) => `<button type="button" class="hr-calendar-event ${bookingState(shoot)}" data-action="details" data-id="${shoot.id}" title="${e(shoot.title)}">
+        ${holiday ? `<span class="hr-calendar-holiday">${e(holiday)}</span>` : ''}
+        ${shoots.slice(0, 2).map((shoot) => `<button type="button" class="hr-calendar-event ${bookingState(shoot)}" data-action="details" data-id="${shoot.id}" title="${e(shoot.title)}">
           <time>${time(shoot.start_at)}</time><span>${e(shoot.title)}</span><span class="sr-only">, ${bookingLabels[bookingState(shoot)]}</span></button>`).join('')}
+        ${shoots.length > 2 ? `<button type="button" class="calendar-overflow" data-action="shoot-day" data-value="${date}"
+          aria-label="Show all ${shoots.length} shoots on ${dayLabel(date)}">+${shoots.length - 2} more</button>` : ''}
       </div>`;
     });
+    const agendaDates = dates.filter((date) => byDay.has(date) || holidays.has(date));
+    const agendaDay = (date) =>
+      `<section class="agenda-day" aria-labelledby="agenda-${date}">
+        <h3 id="agenda-${date}" tabindex="-1"><time datetime="${date}">${dayLabel(date)}</time>
+          ${date === currentDay ? '<span>Today</span>' : ''}</h3>
+        ${holidays.has(date) ? `<p class="agenda-holiday">${icon('calendar-heart')}${e(holidays.get(date))}</p>` : ''}
+        ${byDay.has(date) ? shootRows(byDay.get(date)) : ''}
+      </section>`;
+    const currentDates = agendaDates.filter((date) => period !== currentPeriod || date >= currentDay);
+    const earlierDates = period === currentPeriod ? agendaDates.filter((date) => date < currentDay) : [];
+    const agendaList = currentDates.map(agendaDay).join('') ||
+      empty(earlierDates.length ? 'No upcoming shoots or holidays this month.' : 'No shoots or holidays in this month.');
     const controls = `<div class="hr-toolbar calendar-toolbar">${monthPicker(period, 'shoot-month')}
       <div class="hr-inline">${button('Today', 'shoot-today', 'calendar-days')}
       ${field('Show', `<select id="hr-shoot-filter">${options([['all', manager() ? 'All shoots' : 'My shoots'],
-        ...(manager() ? [['mine', 'Assigned to me']] : []), ...Object.entries(bookingLabels)], shootFilter)}</select>`)}</div></div>`;
+        ...(manager() ? [['mine', 'Assigned to me']] : []), ...Object.entries(bookingLabels)], shootFilter)}</select>`)}
+      <div class="calendar-switch" role="group" aria-label="Calendar layout">
+        ${['calendar', 'agenda'].map((mode) => `<button type="button" class="filter" data-action="shoot-view"
+          data-value="${mode}" aria-pressed="${shootView === mode}">${mode === 'calendar' ? 'Month grid' : 'Agenda'}</button>`).join('')}
+      </div></div></div>`;
     return `${heading('Shoot calendar', 'Browse bookings and scheduled holidays in IST.',
       manager() ? actionButton('Book shoot', 'new-shoot', 'plus') : viewLink('schedule', 'My schedule'))}
-      ${controls}<section class="hr-calendar" aria-label="Shoot calendar for ${monthTitle(period)}">
+      ${controls}${shootView === 'calendar' ? `<section class="hr-calendar" aria-label="Shoot calendar for ${monthTitle(period)}">
         ${weekdays.map((name) => `<strong class="hr-calendar-weekday">${name.slice(0, 3)}</strong>`).join('')}
         ${'<div class="hr-calendar-blank" aria-hidden="true"></div>'.repeat(weekday(start))}
         ${days.join('')}${'<div class="hr-calendar-blank" aria-hidden="true"></div>'.repeat(trailing)}
       </section>
-      <div class="hr-calendar-legend">${Object.keys(bookingLabels).map((key) => tag(bookingLabels[key], bookingColors[key])).join('')}</div>
+      <div class="hr-calendar-legend">${Object.keys(bookingLabels).map((key) => tag(bookingLabels[key], bookingColors[key])).join('')}</div>` : ''}
       <div class="hr-two hr-agenda">
-        ${panel(`${monthTitle(period)} · ${agenda.length} ${agenda.length === 1 ? 'shoot' : 'shoots'}`, shootRows(agenda))}
+        ${panel(`${monthTitle(period)} · ${agenda.length} ${agenda.length === 1 ? 'shoot' : 'shoots'}`,
+          agendaList + (earlierDates.length ? `<details class="agenda-archive"><summary>Earlier this month · ${earlierDates.length}
+            ${earlierDates.length === 1 ? 'day' : 'days'}</summary>${earlierDates.map(agendaDay).join('')}</details>` : ''))}
         ${panel('Postponed shoots', postponed.length ? shootRows(postponed) : empty('No shoots are waiting for a new date.'))}
       </div>`;
   }
@@ -344,8 +374,9 @@ export function createHrViews(ui) {
     const date = today();
     const active = data.sessions.find((session) => session.end_at === null);
     const activeWork = active && data.tasks.find((task) => task.id === active.task_id);
-    const next = tasks.find((task) => task.id !== activeWork?.id && task.work_state === 'ready' &&
-      !task.is_unscheduled && task.start_at + task.estimate * 60_000 > now);
+    const ready = tasks.filter((task) => task.id !== activeWork?.id && task.work_state === 'ready' && !task.blocked_reason);
+    const next = ready.find((task) => !task.is_unscheduled && task.start_at + task.estimate * 60_000 > now) ??
+      ready.find((task) => task.is_unscheduled);
     const approved = data.plans.find((plan) => plan.work_day === date && plan.status === 'approved');
     const planned = approved ? data.tasks.filter((task) => task.daily_plan_id === approved.id).length : 0;
     const unscheduled = tasks.filter((task) => task.is_unscheduled).length;
@@ -361,7 +392,7 @@ export function createHrViews(ui) {
       `<button class="hr-title-button" type="button" data-action="details" data-id="${task.id}">${e(task.title)}</button>` : fallback;
     return `<dl class="balance-list dashboard-queues">
       <div><dt>Active task</dt><dd>${describe(activeWork, 'No timer running')}</dd></div>
-      <div><dt>Next scheduled task</dt><dd>${describe(next, 'No upcoming work')}</dd></div>
+      <div><dt>Next available task</dt><dd>${describe(next, 'No upcoming work')}${next?.is_unscheduled ? '<small>Flexible timing</small>' : ''}</dd></div>
       <div><dt>Approved plan today</dt><dd>${approved ? planned + (planned === 1 ? ' task' : ' tasks') : 'No approved plan'}</dd></div>
       <div><dt>Unscheduled assignments</dt><dd>${unscheduled}</dd></div>
       <div><dt>Items awaiting approval</dt><dd>${requests}</dd></div>
@@ -390,16 +421,28 @@ export function createHrViews(ui) {
     const availableHolidays = state().holidays.filter((holiday) => holiday.day >= today()).slice(0, 3);
     const tasks = boardTasks().filter((task) => !task.completed_at);
     const payslips = personal(state().payslips);
-    return `${heading('My Dashboard', e(actor().name) + ' · ' + e(actor().role))}
-      <div class="hr-dashboard">
+    const storageChecks = state().footageChecks.filter((item) => ['assigned', 'returned', 'incident'].includes(item.status));
+    const deliveries = tasks.filter((task) => task.delivery_due_at).sort((a, b) => a.delivery_due_at - b.delivery_due_at);
+    const focus = storageChecks.length && !upcoming.length ? panel('Footage to verify', storageChecks.slice(0, 4).map((item) =>
+      `<article class="hr-entry"><div><strong>${e(item.shoot_title)}</strong><p class="hr-muted">${e(item.shoot_location)}</p></div>
+        ${item.status === 'returned' ? tag('Returned', 'sand') : item.status === 'incident' ? tag('Incident', 'peach') : tag('Assigned', 'sage')}</article>`
+    ).join(''), viewLink('footage', 'Open footage storage'), 'employee-shoots') :
+      deliveries.length && !upcoming.length ? panel('Editing deliveries', deliveries.slice(0, 4).map((task) => `<article class="hr-entry">
+        <div><button type="button" class="hr-title-button" data-action="details" data-id="${task.id}">${e(task.title)}</button>
+          <p class="hr-muted">${dayLabel(day(task.delivery_due_at))} · ${time(task.delivery_due_at)} IST</p></div>
+        ${task.delivery_due_at < now ? tag('Overdue', 'peach') : ''}</article>`).join(''),
+      viewLink('task-board', 'Open tasks'), 'employee-shoots') :
+        panel('Upcoming shoots', shootRows(upcoming.slice(0, 4)), viewLink('shoot-calendar', 'Calendar'), 'employee-shoots');
+    return `${heading('My Dashboard', e(actor().name) + ' · ' + e(actor().role), '', dayLabel(today()) + ' · IST')}
+      <div class="hr-dashboard employee-dashboard">
         ${clockCard()}
-      ${panel('Work priorities', todayActions(tasks, now), viewLink('daily-plans', 'Daily plans'), 'hr-span')}
-        ${attendanceSummary()}
-        ${panel('Upcoming shoots', shootRows(upcoming.slice(0, 4)), viewLink('shoot-calendar', 'Calendar'), 'hr-span')}
+        ${panel('Work priorities', todayActions(tasks, now), viewLink('daily-plans', 'Daily plans'), 'employee-priorities')}
+        ${focus}
         ${panel('My tasks', tasks.length ? tasks.slice(0, 4).map((task) => `<article class="hr-entry">
           <div><button type="button" class="hr-title-button" data-action="details" data-id="${task.id}">${e(task.title)}</button>
             <p class="hr-muted">${dayLabel(day(task.start_at))} · ${time(task.start_at)}</p></div>${task.priority ? tag('Priority', 'peach') : ''}</article>`).join('') :
-          empty('No open tasks.'), viewLink('task-board', 'All tasks'), 'hr-span')}
+          empty('No open tasks.'), viewLink('task-board', 'All tasks'), 'employee-tasks')}
+        ${attendanceSummary()}
         ${panel('Holidays', availableHolidays.length ? holidaysList(availableHolidays) : empty('No upcoming holidays.'), viewLink('leave', 'Holiday list'))}
         ${panel('Leave', leaveBalance(), button('Apply', 'leave-request', 'calendar-plus'))}
         ${panel('My records', recordsSummary(), button('Private notepad', 'profile', 'clipboard-list'), 'hr-span')}
@@ -519,7 +562,29 @@ export function createHrViews(ui) {
     'attendance-month': (_, value) => { attendanceMonth = getMonth(attendanceMonth || today().slice(0, 7), Number(value)); render(); },
     'attendance-recent': () => { attendanceMonth = ''; render(); },
     'shoot-month': (_, value) => { shootMonth = getMonth(shootMonth || today().slice(0, 7), Number(value)); render(); },
-    'shoot-today': () => { shootMonth = ''; render(); },
+    'shoot-today': () => {
+      shootMonth = '';
+      render();
+      const heading = document.getElementById('agenda-' + today());
+      if (heading && (shootView === 'agenda' || matchMedia('(max-width: 720px)').matches)) {
+        heading.focus();
+        heading.scrollIntoView({ block: 'start' });
+      } else {
+        document.querySelector('[data-action="shoot-today"]')?.focus();
+      }
+    },
+    'shoot-view': (_button, value) => {
+      shootView = value;
+      render();
+      document.querySelector('.calendar-switch [aria-pressed="true"]')?.focus();
+    },
+    'shoot-day': (_button, value) => {
+      const date = document.getElementById('agenda-' + value);
+      const archive = date?.closest('details');
+      if (archive) archive.open = true;
+      date?.focus();
+      date?.scrollIntoView({ block: 'start' });
+    },
     'time-request': (_, value) => requestForm('time', value),
     'leave-request': () => requestForm('leave', today()),
     'hr-settings': settingsForm,
@@ -558,8 +623,8 @@ export function createHrViews(ui) {
       return elapsedClock(hoursToday().actual);
     },
     workTarget() {
-      const { required, remaining, overtime } = hoursToday();
-      return { required, remaining, aboveTarget: overtime };
+      const { actual, required, remaining, overtime } = hoursToday();
+      return { actual, required, remaining, aboveTarget: overtime };
     },
     timeRequestButton,
     officeHours() {
@@ -570,6 +635,7 @@ export function createHrViews(ui) {
     reset() {
       attendanceMonth = attendancePerson = shootMonth = '';
       shootFilter = taskFilter = 'all';
+      shootView = 'calendar';
     },
   };
 }

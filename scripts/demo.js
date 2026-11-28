@@ -47,7 +47,9 @@ export async function seedDemo(database, { scale = 1, now = Date.now() } = {}) {
       const sales = ['Product catalogue', 'Studio portraits', 'Editorial collection', 'Retail launch', 'Food styling', 'Location portraits'];
       for (let i = 1; i <= scale * 24; i++) {
         const label = sales[(i - 1) % sales.length] + (i > sales.length ? ' · ' + i : '');
-        const time = midnight + (i % 5 === 0 ? 1 + (i / 5) % 25 : -(i % 70)) * dayLength + (8 + i % 10) * 3_600_000;
+        const time = i === 1 ? midnight + 9 * 3_600_000 :
+          i === 2 ? Math.min(midnight + 23 * 3_600_000, now + 90 * 60_000) :
+            midnight + (i % 5 === 0 ? 1 + (i / 5) % 25 : -(i % 70)) * dayLength + (8 + i % 10) * 3_600_000;
         const completed = time + 3 * 3_600_000 < now ? time + 3 * 3_600_000 : null;
         addClient.run(i, 'Rehearsal client ' + i, String(9000000000 + i), 'client-' + i + '@studio.example.invalid');
         addProject.run(i, i, label, Math.min(time, now));

@@ -1,13 +1,14 @@
 export function createRevenueViews(ui) {
-  const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, empty, table, today, day, money, duration } = ui;
+  const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, empty, table, today, day, money, duration, chart, moneyTick } = ui;
   let report;
   let filters;
   let version = 0;
 
   function page() {
     const chosen = filters ?? { employeeId: actor().id, date: today(), period: 'month' };
+    const allocations = report?.rows.filter((row) => row.amount_paise > 0).slice(0, 6) ?? [];
     return `${heading('Revenue contribution', 'Allocated from the booked value of completed shoots. Payroll and cash receipts are tracked separately.')}
-      <div class="operation-stack"><section class="panel">${entryForm('revenue/report', `
+      <div class="operation-stack"><section class="panel report-filters">${entryForm('revenue/report', `
         ${manager() ? `<label class="full">Employee<select name="employeeId">${state().employees.map((person) =>
           `<option value="${person.id}"${person.id === Number(chosen.employeeId) ? ' selected' : ''}>${e(person.name)}</option>`).join('')}</select></label>` : ''}
         <label>Date (IST)<input type="date" name="date" required max="${today()}" value="${e(chosen.date)}"></label>
@@ -19,6 +20,9 @@ export function createRevenueViews(ui) {
         <dl class="worksheet-totals"><div><dt>Contribution</dt><dd>${money(report.total)}</dd></div>
           <div><dt>Recorded project time</dt><dd>${duration(report.time)}</dd></div>
           <div><dt>Contribution per hour</dt><dd>${report.perHour == null ? '—' : money(report.perHour)}</dd></div></dl>
+        ${allocations.length > 1 ? chart({ title: 'Recent allocations', description: 'Up to six completed shoots with an allocation in this report.',
+          rows: allocations.map((row) => ({ label: row.title, values: [row.amount_paise] })), series: ['Allocated value'],
+          format: money, tickFormat: moneyTick }) : ''}
         ${report.rows.length ? table('Completed shoots', ['Shoot', 'Completed', 'Project time', 'Allocated value'], report.rows.map((row) =>
           [e(row.title), day(row.completed_at), duration(row.work_ms), row.amount_paise == null ? 'Awaiting allocation' : money(row.amount_paise)])) :
           empty('No completed shoots in this period.')}

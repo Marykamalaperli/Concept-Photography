@@ -21,6 +21,9 @@ const webPushEnabled = Boolean(document.querySelector('meta[name="concept-web-pu
 const main = document.querySelector('main');
 const sidebar = document.querySelector('#sidebar');
 const topbar = document.querySelector('#topbar');
+const mobileDock = document.querySelector('#mobile-dock');
+const mobileScrim = document.querySelector('.mobile-scrim');
+const compactScreen = matchMedia('(max-width: 780px)');
 const dialog = document.querySelector('#dialog');
 const toast = document.querySelector('#toast');
 const zone = 'Asia/Kolkata';
@@ -70,6 +73,14 @@ const employeeNav = [
   ['announcements', 'Announcements', 'megaphone'],
   ['notifications', 'Notifications', 'bell'],
 ];
+const navGroups = [
+  ['Overview', ['dashboard', 'notifications']],
+  ['Scheduling', ['schedule', 'shoot-calendar', 'daily-plans', 'task-board', 'work']],
+  ['People & hours', ['team', 'attendance', 'leave', 'work-log', 'worksheet', 'payroll']],
+  ['Studio operations', ['projects', 'clients', 'scoped-work', 'footage', 'approvals', 'reviews']],
+  ['Finance', ['finances', 'revenue']],
+  ['Administration', ['announcements', 'settings', 'audit-history']],
+];
 const categories = {
   'Photo shoot': ['camera', 'peach'],
   Editing: ['image', 'lavender'],
@@ -93,7 +104,9 @@ let actorId;
 let page = 'dashboard';
 let scheduleFilter = 'upcoming';
 let employeeFilter = 'all';
+let scheduleLimit = 16;
 let mobileMenu = false;
+let menuTrigger;
 let pending = false;
 let loading = false;
 let initialLoadError = false;
@@ -202,8 +215,9 @@ function taskStatus(task) {
   return tag(task.is_unscheduled ? 'Unscheduled' : 'Scheduled', 'neutral');
 }
 
-function heading(title, copy, action = '') {
-  return `<div class="page-head"><div><h1>${title}</h1><p>${copy}</p></div>${action}</div>`;
+function heading(title, copy, action = '', context = '') {
+  return `<div class="page-head"><div>${context ? `<p class="page-context">${context}</p>` : ''}
+    <h1>${title}</h1>${copy ? `<p>${copy}</p>` : ''}</div>${action}</div>`;
 }
 
 function actionButton(label, action, symbol, kind = 'primary', id = null) {
@@ -218,27 +232,74 @@ function empty(message) {
   return `<p class="empty">${message}</p>`;
 }
 
+function syncMobileMenu() {
+  const open = compactScreen.matches && mobileMenu;
+  document.body.classList.toggle('mobile-menu-open', open);
+  sidebar.classList.toggle('open', open);
+  main.inert = open;
+  mobileScrim.hidden = !open;
+  document.querySelectorAll('[data-nav-toggle]').forEach((item) => item.setAttribute('aria-expanded', String(open)));
+  return open;
+}
+
+function setMobileMenu(open, trigger) {
+  if (open) menuTrigger = trigger;
+  mobileMenu = open;
+  if (syncMobileMenu()) sidebar.querySelector('[aria-current="page"]')?.focus();
+  else if (menuTrigger?.isConnected) menuTrigger.focus();
+  else topbar.querySelector('[data-nav-toggle]')?.focus();
+}
+
+compactScreen.addEventListener('change', () => {
+  mobileMenu = false;
+  syncMobileMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && mobileMenu && !dialog.open) setMobileMenu(false);
+});
+
+const chromeMarkup = new WeakMap();
+function updateChrome(element, markup) {
+  if (chromeMarkup.get(element) === markup && element.hasChildNodes()) return;
+  const focused = element.contains(document.activeElement) ? document.activeElement : null;
+  const target = focused?.getAttribute('href');
+  const action = focused?.dataset.action;
+  const position = element.scrollTop;
+  element.innerHTML = markup;
+  chromeMarkup.set(element, markup);
+  element.scrollTop = position;
+  if (target || action) {
+    [...element.querySelectorAll('a, button')].find((control) => target ?
+      control.getAttribute('href') === target : control.dataset.action === action)?.focus({ preventScroll: true });
+  }
+}
+
 function renderChrome() {
   const person = actor();
   const unread = [...reminders(), ...state.operationNotices].filter((notice) => !notice.read_at).length;
-  const section = nav().find(([key]) => key === page)[1];
-  sidebar.classList.toggle('open', mobileMenu);
-  sidebar.innerHTML = `
+  const links = new Map(nav().map((entry) => [entry[0], entry]));
+  const section = links.get(page)[1];
+  const [group] = navGroups.find(([, keys]) => keys.includes(page));
+  const sideLink = ([key, label, symbol]) => {
+    const count = key === 'approvals' ? pendingRequests().length : key === 'notifications' ? unread : 0;
+    return `<a href="#${key}" class="nav-link ${page === key ? 'active' : ''}" ${page === key ? 'aria-current="page"' : ''}>
+      ${icon(symbol)}<span>${label}</span>${count ? `<span class="nav-count">${count}</span>` : ''}</a>`;
+  };
+  updateChrome(sidebar, `
     <a class="brand" href="#dashboard" aria-label="Concept Photography dashboard">
-      <img class="brand-mark" src="./brand-mark.png" width="39" height="39" alt=""><span><strong>Concept</strong><small>Photography</small></span>
+      <img class="brand-mark" src="./brand-mark.png" width="34" height="34" alt=""><span><strong>Concept</strong><small>Photography</small></span>
     </a>
     <nav class="nav" aria-label="Workspace">
-      ${nav().map(([key, label, symbol]) => {
-        const count = key === 'approvals' ? pendingRequests().length : key === 'notifications' ? unread : 0;
-        return `<a href="#${key}" class="nav-link ${page === key ? 'active' : ''}" ${page === key ? 'aria-current="page"' : ''}>
-          ${icon(symbol)}${label}${count ? `<span class="nav-count">${count}</span>` : ''}
-        </a>`;
+      ${navGroups.map(([title, keys]) => {
+        const items = keys.filter((key) => links.has(key));
+        return items.length ? `<div class="nav-group" role="group" aria-label="${title}">
+          <p class="nav-title" aria-hidden="true">${title}</p>${items.map((key) => sideLink(links.get(key))).join('')}</div>` : '';
       }).join('')}
-    </nav>
-    <div class="sidebar-foot"><img src="./brand-mark.png" width="18" height="18" alt=""><strong>Concept Photography</strong></div>`;
-  topbar.innerHTML = `
+    </nav>`);
+  updateChrome(topbar, `
     <div class="breadcrumb">
-      <button type="button" class="icon-button menu-button" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="${mobileMenu}" data-action="menu">${icon('menu')}</button>
+      <button type="button" class="icon-button menu-button" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="${mobileMenu}" data-nav-toggle data-action="menu">${icon('menu')}</button>
+      ${page === 'dashboard' ? '' : `<span class="breadcrumb-group">${group}</span>${icon('chevron-right')}`}
       <strong>${section}</strong>
     </div>
     <div class="top-actions">
@@ -247,7 +308,14 @@ function renderChrome() {
       <button type="button" class="profile profile-head btn secondary" aria-label="My profile" data-action="profile">${avatar(person)}
         <span><span class="profile-name">${e(person.name)}</span><span class="profile-role">${e(person.role)}</span></span></button>
       <button type="button" class="icon-button" aria-label="Sign out" title="Sign out" data-action="sign-out">${icon('log-out')}</button>
-    </div>`;
+    </div>`);
+  const shortcuts = manager() ? [['dashboard', 'Home'], ['shoot-calendar', 'Shoots'], ['reviews', 'Reviews']] :
+    [['dashboard', 'Home'], ['attendance', 'Clock'], ['schedule', 'Schedule']];
+  updateChrome(mobileDock, `${shortcuts.map(([key, label]) => `<a href="#${key}" aria-label="${links.get(key)[1]}" ${page === key ? 'aria-current="page"' : ''}>
+    ${icon(links.get(key)[2])}<span>${label}</span></a>`).join('')}
+    <button type="button" aria-label="More workspace pages" aria-controls="sidebar" data-nav-toggle data-action="menu">
+      ${icon('menu')}<span>More</span></button>`);
+  syncMobileMenu();
 }
 
 function showAuthStatus(message = '') {
@@ -259,6 +327,8 @@ function showAuthStatus(message = '') {
 
 function loginPage() {
   stopTracking();
+  mobileMenu = false;
+  syncMobileMenu();
   document.body.classList.add('signed-out');
   sidebar.innerHTML = '';
   topbar.innerHTML = '';
@@ -277,8 +347,11 @@ function scheduleRow(task) {
   const [symbol, tone] = categories[task.category];
   const lead = employee(task.employee_id)?.name;
   const owner = task.is_open ? 'Available for requests' : task.crew?.length ? task.crew.map((member) => member.name).join(', ') : lead;
+  const timing = task.is_unscheduled ? 'Flexible' : task.shoot_status === 'postponed' ? 'Date pending' :
+    `<time datetime="${new Date(task.start_at).toISOString()}">${time(task.start_at)}</time>
+      <small>to ${shootEndLabel(task)}</small>`;
   return `<button type="button" class="schedule-row" data-action="details" data-id="${task.id}">
-    <span class="schedule-time">${shortDate.format(task.start_at)}<br>${time(task.start_at)}</span>
+    <span class="schedule-time">${timing}</span>
     ${tile(symbol, tone)}
     <span><span class="schedule-title">${e(task.title)}</span><span class="schedule-meta">${e(manager() ? owner : task.client_name || task.category)} · ${e(task.location)}</span></span>
     <span class="row-tags">${priority(task)}${taskStatus(task)}</span>
@@ -286,8 +359,8 @@ function scheduleRow(task) {
 }
 
 function metrics(items) {
-  return `<section class="stats" aria-label="Summary">${items.map(([label, value, symbol, color]) => `
-    <article class="stat">${tile(symbol, color)}<div><p class="stat-label">${label}</p><p class="stat-value">${value}</p></div></article>`).join('')}</section>`;
+  return `<dl class="stats" aria-label="Summary">${items.map(([label, value]) => `
+    <div class="stat"><dt class="stat-label">${label}</dt><dd class="stat-value">${value}</dd></div>`).join('')}</dl>`;
 }
 
 function totals() {
@@ -327,6 +400,10 @@ function dashboard() {
   const month = date.slice(0, 7);
   const openTasks = state.tasks.filter((task) => task.shoot_status === 'booked' && !task.completed_at);
   const upcoming = openTasks.filter((task) => !task.is_unscheduled && task.start_at + task.estimate * 60_000 > now);
+  const bookedToday = shoots().filter((task) => task.shoot_status === 'booked' && !task.is_open &&
+    day(task.start_at) <= date && day(task.start_at + task.estimate * 60_000 - 1) >= date).sort((a, b) => a.start_at - b.start_at);
+  const nextShoot = upcoming.filter((task) => task.category === 'Photo shoot' && day(task.start_at) > date && !task.is_open)
+    .reduce((next, task) => !next || task.start_at < next.start_at ? task : next, null);
   const { outstanding } = totals();
   const received = state.payments.reduce((sum, item) => sum + (item.paid_on.startsWith(month) ? item.amount_paise : 0), 0);
   const expenses = state.expenses.reduce((sum, item) => sum + (item.spent_on.startsWith(month) ? item.amount_paise : 0), 0);
@@ -339,7 +416,7 @@ function dashboard() {
     const gap = shift && state.attendanceGaps.some((item) => item.attendance_id === shift.id && item.resolved_at === null);
     const status = period ? { travel: 'Travelling', lunch: 'At lunch', personal: 'On a break' }[period.kind] :
       activeSite?.taskId ? 'On a shoot' : 'Working';
-    return [`<div><dt>${e(person.name)}</dt><dd>${status}${gap ? ' · GPS unverified' : ''}</dd></div>`];
+    return [`<div><dt>${avatar(person)}<span>${e(person.name)}</span></dt><dd>${status}${gap ? '<small>GPS unverified</small>' : ''}</dd></div>`];
   });
   const dueToday = openTasks.filter((task) => task.is_unscheduled || day(task.start_at) === date);
   const assigned = new Set(dueToday.flatMap((task) => [task.employee_id, ...(task.crew ?? []).map((person) => person.employee_id)]));
@@ -351,51 +428,48 @@ function dashboard() {
       item.leave_type !== 'half' && item.day_from <= date && item.day_to >= date));
   const queue = [
     ['GPS verification interruptions', state.attendanceGaps.filter((item) => item.resolved_at === null).length, 'attendance'],
+    ['Emergency shoots', upcoming.filter((item) => item.emergency).length, 'shoot-calendar'],
     ['Shifts below required hours awaiting review', state.shiftReviews.filter((item) => item.status === 'pending' && item.recorded_ms < item.required_ms).length, 'reviews'],
     ['Employees without work today', unassigned.length, 'schedule'],
     ['Daily plans awaiting review', state.plans.filter((item) => item.status === 'submitted').length, 'reviews'],
     ['Overdue tasks', openTasks.filter((item) => item.category !== 'Photo shoot' && item.work_state === 'ready' && !item.is_unscheduled &&
       item.start_at + item.estimate * 60_000 < now).length, 'task-board'],
-    ['Emergency shoots', upcoming.filter((item) => item.emergency).length, 'shoot-calendar'],
     ['Work, leave and time requests', pendingRequests().length, 'approvals'],
     ['Next-day plans past deadline', state.missingNextPlans ?? 0, 'daily-plans'],
     ['Pending footage checks', state.footageChecks.filter((item) => item.status !== 'approved').length, 'footage'],
   ];
+  const attention = queue.filter(([, count]) => count > 0);
+  const reviews = state.plans.filter((item) => item.status === 'submitted').length + pendingRequests().length;
   return `
-    ${heading('Admin Dashboard', 'Manage the studio’s people, shoots, and finances.', actionButton('Schedule shoot', 'new-shoot', 'plus'))}
-    <p class="dashboard-date">${studioDate.format(now)}</p>
+    ${heading('Admin Dashboard', '', actionButton('Schedule shoot', 'new-shoot', 'plus'), studioDate.format(now) + ' · IST')}
     ${metrics([
-      ['Employees on duty', active.length, 'users', 'peach'],
-      ['Upcoming shoots', upcoming.filter((task) => task.category === 'Photo shoot').length, 'calendar-days', 'lavender'],
-      ['Plans awaiting review', queue[3][1], 'clipboard-check', 'sand'],
-      ['Receipts this month', money(received), 'wallet', 'sage'],
+      ['On duty', active.length],
+      ['Shoots today', bookedToday.length],
+      ['Plans and requests to review', reviews],
+      ['Payments due', money(outstanding)],
     ])}
-    <div class="dashboard-grid">
-      <div class="stack">
-      <section class="panel">
-        <div class="panel-head"><div><h2>Needs attention</h2></div></div>
-        ${queue.some(([, count]) => count) ? `<dl class="balance-list dashboard-queues">${queue.filter(([, count]) => count)
-          .map(([label, count, route]) => `<div><dt>${viewLink(route, label)}</dt><dd>${count}</dd></div>`).join('')}</dl>` : empty('No operational issues to review.')}
+    <div class="studio-dashboard">
+      <section class="panel studio-attention">
+        <div class="panel-head"><h2>Needs attention</h2>${attention.length ? `<span class="attention-total">${attention.length} ${attention.length === 1 ? 'category' : 'categories'}</span>` : ''}</div>
+        ${attention.length ? `<ul class="attention-list">${attention.map(([label, count, route]) => `<li>
+          <a href="#${route}"><strong>${count}</strong><span>${label}</span>${icon('arrow-up-right')}</a></li>`).join('')}</ul>` : empty('No operational issues to review.')}
         ${unassigned.length ? `<p class="dashboard-names">${e(unassigned.slice(0, 6).map((person) => person.name).join(', '))}${unassigned.length > 6 ? ' and ' + (unassigned.length - 6) + ' more' : ''}</p>` : ''}
       </section>
-      <section class="panel">
-        <div class="panel-head"><div><h2>Upcoming schedule</h2><p>Assigned work appears first.</p></div>${viewLink('schedule', 'View schedule')}</div>
-        ${upcoming.length ? upcoming.slice(0, 5).map(scheduleRow).join('') : empty('No upcoming shoots or tasks.')}
+      <section class="panel studio-shoots">
+        <div class="panel-head"><h2>Today’s shoots</h2>${viewLink('shoot-calendar', 'Shoot calendar')}</div>
+        ${bookedToday.length ? bookedToday.slice(0, 6).map(scheduleRow).join('') : empty('No shoots on today’s schedule.')}
+        ${bookedToday.length > 6 ? `<details class="studio-more"><summary>Show ${bookedToday.length - 6} more today</summary>${bookedToday.slice(6).map(scheduleRow).join('')}</details>` : ''}
+        ${nextShoot ? `<div class="upcoming-booking"><p>Next booking · ${shortDate.format(nextShoot.start_at)}</p>${scheduleRow(nextShoot)}</div>` : ''}
       </section>
-      </div>
-      <div class="stack">
-        <section class="panel"><div class="panel-head"><h2>On duty</h2>${viewLink('attendance', 'Attendance')}</div>
-          ${active.length ? `<dl class="balance-list">${active.join('')}</dl>` : empty('No employees are checked in or travelling.')}
-        </section>
-        <section class="panel">
-          <div class="panel-head"><div><h2>Finance overview</h2><p>${new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(now)}</p></div>${viewLink('finances', 'View finances')}</div>
-          <dl class="balance-list"><div><dt>Receipts this month</dt><dd>${money(received)}</dd></div>
-          <div><dt>Expenses this month</dt><dd>${money(expenses)}</dd></div>
-          <div><dt>Cash profit or loss this month</dt><dd>${money(received - expenses)}</dd></div>
-          <div><dt>Outstanding client payments</dt><dd>${money(outstanding)}</dd></div></dl>
-        </section>
-        ${officeCard()}
-      </div>
+      <section class="panel studio-duty"><div class="panel-head"><h2>On duty</h2>${viewLink('attendance', 'Attendance')}</div>
+        ${active.length ? `<dl class="balance-list duty-list">${active.join('')}</dl>` : empty('No employees are checked in or travelling.')}
+      </section>
+      <section class="panel studio-cash">
+        <div class="panel-head"><div><h2>Cash position</h2><p>${new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: zone }).format(now)}</p></div>${viewLink('finances', 'View finances')}</div>
+        <dl class="balance-list"><div class="cash-key"><dt>${received < expenses ? 'Cash loss' : 'Cash profit'}</dt><dd>${money(received - expenses)}</dd></div>
+        <div><dt>Receipts</dt><dd>${money(received)}</dd></div><div><dt>Expenses</dt><dd>${money(expenses)}</dd></div></dl>
+      </section>
+      ${officeCard()}
     </div>`;
 }
 
@@ -409,13 +483,16 @@ function clockCard() {
   const canClockIn = !shift && Boolean(state.office || sites.length);
   const canClockOut = Boolean(shift && boundSite);
   const officeHours = hrViews.officeHours();
+  const target = hrViews.workTarget();
   const clockButton = (label, symbol, available) => available ? actionButton(label, 'clock', symbol) :
     `<button type="button" class="btn secondary" disabled>${icon(symbol)}${label}</button>`;
   return `<section class="panel hr-panel hr-clock">
     <header class="hr-panel-head"><h2>Time clock</h2>${shift ? tag('Checked in', 'sage') : tag('Checked out', 'neutral')}</header>
     <div class="hr-panel-body">
       <p class="hr-time-label">Today’s hours</p><div class="hr-timer" id="today-hours">${hrViews.todayClock()}</div>
-      <p class="hr-muted" id="work-target">${workTargetLabel()}</p>
+      <p class="hr-muted" id="work-target">${workTargetLabel(target)}</p>
+      ${target.required ? `<progress class="clock-progress" aria-label="Progress toward today’s working-hours target"
+        max="${Math.ceil(target.required / 60_000)}" value="${Math.floor(target.actual / 60_000)}"></progress>` : ''}
       ${!shift && sites.length ? `<label class="clock-site">Check-in site
         <select id="clock-target">
           ${state.office ? '<option value="">' + e(officeSites(state.office).length > 1 ? 'Office locations' : state.office.name) + '</option>' : ''}
@@ -431,9 +508,11 @@ function clockCard() {
         ${offlineDeparture.error ? actionButton('Discard queued request', 'discard-offline-departure', 'x', 'secondary') : ''}` :
         `<div class="hr-clock-buttons">${clockButton('Check in', 'log-in', canClockIn)}${clockButton('Check out', 'log-out', canClockOut)}</div>
         ${worksheetViews.clockDetails(shift, last)}`}
-      ${officeHours ? `<p class="hr-muted">${officeHours}</p>` : ''}
-      <p class="hr-muted">${canClockIn || canClockOut ? 'A verified GPS reading is required.' : 'No check-in site is available.'}</p>
-      <p class="location-watch" data-location-watch role="status"></p>
+      <div class="clock-verification">
+        <p>${icon('locate-fixed')}${canClockIn || canClockOut ? 'GPS verification' : 'No check-in site is available.'}</p>
+        <p class="location-watch" data-location-watch role="status"></p>
+        ${officeHours ? `<p class="hr-muted">${officeHours}</p>` : ''}
+      </div>
       ${(shift?.site || last?.resume_pending) && !permissionGranted ? actionButton('Enable location tracking', 'enable-location', 'locate-fixed', 'secondary') : ''}
       ${!shift ? hrViews.timeRequestButton(today(), 'Request a time change') : ''}
       ${manager() || last?.resume_pending ? `<div class="clock-tools">
@@ -519,6 +598,23 @@ function schedulePage() {
     if (scheduleFilter === 'completed') return Boolean(task.completed_at);
     return true;
   });
+  const byDate = new Map();
+  for (const task of filtered) {
+    const date = task.is_unscheduled ? 'Unscheduled' : task.shoot_status === 'postponed' ? 'Date pending' : day(task.start_at);
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push(task);
+  }
+  const dates = [...byDate.keys()].sort((first, second) => scheduleFilter === 'completed' ?
+    second.localeCompare(first) : first.localeCompare(second));
+  const rows = dates.slice(0, scheduleLimit).map((date) => {
+    const label = date === 'Unscheduled' || date === 'Date pending' ? date :
+      studioDate.format(Date.parse(date + 'T12:00:00+05:30'));
+    const tasks = byDate.get(date);
+    return `<section class="agenda-section">
+      <div class="agenda-date"><h2>${label}</h2><small>${tasks.length} ${tasks.length === 1 ? 'assignment' : 'assignments'}</small></div>
+      <div class="agenda-assignments">${tasks.map(scheduleRow).join('')}</div>
+    </section>`;
+  });
   const options = [['upcoming', 'Upcoming'], ['today', 'Today'], ['all', 'All work'], ['completed', 'Completed']];
   const actions = `<div class="card-actions schedule-actions">
     ${viewLink('shoot-calendar', 'Shoot calendar')}
@@ -531,7 +627,9 @@ function schedulePage() {
       ${manager() ? `<select id="schedule-employee" aria-label="Filter schedule by employee"><option value="all">All employees</option>
         ${state.employees.map((person) => `<option value="${person.id}" ${String(person.id) === employeeFilter ? 'selected' : ''}>${e(person.name)}</option>`).join('')}</select>` : ''}
     </div>
-    ${filtered.length ? `<div class="task-grid">${filtered.map((task) => taskCard(task)).join('')}</div>` : `<section class="panel">${empty('No work matches this view.')}</section>`}`;
+    ${rows.length ? `<div class="panel schedule-agenda">${rows.join('')}
+      ${dates.length > scheduleLimit ? `<div class="card-actions">${actionButton('Show more dates', 'extend-schedule', 'chevron-down', 'secondary')}</div>` : ''}
+      </div>` : `<section class="panel">${empty('No work matches this view.')}</section>`}`;
 }
 
 function calendarDialog(info) {
@@ -603,13 +701,12 @@ function workControls(task) {
     ${!task.footage_id ? actionButton('Block task', 'block-task', 'octagon-alert', 'secondary', task.id) : ''}`;
 }
 
-function taskCard(task, inDialog = false) {
+function taskDetails(task) {
   const isShoot = task.category === 'Photo shoot';
   const sites = shootSites(task);
   const editing = manager() && isShoot && task.completed_at ? state.tasks.find((item) => item.parent_shoot_id === task.id) : null;
-  return `<article class="${inDialog ? '' : 'panel task-card'}">
-    ${inDialog ? '' : `<div class="panel-head"><div><h2>${e(task.title)}</h2><p>${e(task.category)}</p></div>
-      <div class="row-tags">${priority(task)}${taskStatus(task)}</div></div>`}
+  return `<article>
+    <div class="task-details-status">${priority(task)}${taskStatus(task)}</div>
     <div class="task-details">
       ${task.crew?.length ? `<div class="inline">${icon('users')}${e(task.crew.map((member) => member.name).join(', '))}</div>` :
         manager() ? `<div class="inline">${icon('user-round')}${task.is_open ? 'Open to employee requests' : e(employee(task.employee_id)?.name)}</div>` : ''}
@@ -738,8 +835,9 @@ function financesPage() {
     `<strong>${e(task.title)}</strong><small>${e(task.client_name || 'No client')}</small>`, e(task.payment_due_on), money(pending),
     actionButton('Record payment', 'record-payment', 'plus', 'secondary', task.id),
   ]);
+  const taskTitles = new Map(state.tasks.map((task) => [task.id, task.title]));
   const paymentRows = report.payments.map((entry) => [e(entry.paid_on),
-    e(state.tasks.find((task) => task.id === entry.task_id)?.title), money(entry.amount_paise), e(entry.category || 'Shoot payment'), e(entry.note || '—'),
+    e(taskTitles.get(entry.task_id)), money(entry.amount_paise), e(entry.category || 'Shoot payment'), e(entry.note || '—'),
     actionButton('Edit payment', 'edit-payment', 'pencil', 'secondary', entry.id)]);
   const expenseRows = report.expenses.map((entry) => [e(entry.spent_on), e(entry.name), e(entry.category), money(entry.amount_paise), e(entry.note || '—'),
     `<div class="card-actions">${actionButton('Edit expense', 'edit-expense', 'pencil', 'secondary', entry.id)}
@@ -754,13 +852,16 @@ function financesPage() {
         ${actionButton('Export CSV', 'export-finance', 'download', 'secondary')}
         ${actionButton('Print or save PDF', 'print-finance', 'printer', 'secondary')}</div>
     </section>
-    ${metrics([['Expected shoot income', money(report.expected), 'indian-rupee', 'lavender'],
-      ['Payments received', money(report.received), 'wallet', 'sage'], ['Pending for these shoots', money(report.outstanding), 'hourglass', 'sand'],
-      ['Expenses', money(report.spent), 'receipt', 'peach']])}
-    <section class="panel net-panel"><div><h2>Cash profit ${financeMonth ? 'for this period' : 'to date'}</h2><p>Payments received less expenses recorded${report.received
-      ? ` · ${new Intl.NumberFormat('en-IN', { style: 'percent', maximumFractionDigits: 1 }).format(report.net / report.received)} cash margin` : ''}</p></div><strong>${money(report.net)}</strong></section>
-    ${cashTrendPanel()}
-    ${cashGrowthPanel()}
+    ${metrics([['Expected shoot income', money(report.expected)], ['Payments received', money(report.received)],
+      ['Pending for these shoots', money(report.outstanding)], ['Expenses', money(report.spent)]])}
+    <div class="finance-analysis">
+      ${cashTrendPanel()}
+      <div class="stack">
+        <section class="panel net-panel"><div><h2>${report.net < 0 ? 'Cash loss' : 'Cash profit'} ${financeMonth ? 'for this period' : 'to date'}</h2><p>Payments received less expenses recorded${report.received
+          ? ` · ${new Intl.NumberFormat('en-IN', { style: 'percent', maximumFractionDigits: 1 }).format(report.net / report.received)} cash margin` : ''}</p></div><strong>${money(report.net)}</strong></section>
+        ${cashGrowthPanel()}
+      </div>
+    </div>
     <div class="finance-breakdowns">${financeGroups(report, state.tasks, state.projects).map(([label, rows]) => `<section class="panel">
       <div class="panel-head"><h2>${label}</h2></div>
       ${rows.length ? table(label, ['Name', 'Total'], rows.map(([name, total]) => [e(name), money(total)])) : empty('No transactions in this period.')}
@@ -778,21 +879,42 @@ function financesPage() {
     </div></div>`;
 }
 
+function comparisonChart({ title, description, rows, series, format, tickFormat = format, extraHeading = '' }) {
+  const scale = Math.max(0, ...rows.flatMap(({ values }) => values));
+  if (!scale) return '';
+  return `<figure class="comparison-chart${extraHeading ? ' chart-with-extra' : ''}">
+    <figcaption><h2>${e(title)}</h2><p>${e(description)}</p></figcaption>
+    <div aria-hidden="true">
+      <ul class="chart-legend">${series.map((label, index) => `<li><i class="chart-ink-${index}"></i>${e(label)}</li>`).join('')}</ul>
+      <div class="chart-header chart-line"><div></div>
+        <div class="chart-axis">${[0, scale / 2, scale].map((tick) => `<span>${e(tickFormat(tick))}</span>`).join('')}</div>
+        ${extraHeading ? `<div>${e(extraHeading)}</div>` : ''}
+      </div>
+      ${rows.map(({ label, values, extra }) => `<div class="chart-line chart-row">
+        <strong title="${e(label)}">${e(label)}</strong>
+        <div class="chart-plot">${values.map((value, index) => `<div><span class="chart-ink-${index}" style="--share:${value / scale * 100}%"
+          title="${e(series[index] + ' · ' + format(value))}"></span></div>`).join('')}</div>
+        ${extraHeading ? `<div class="chart-extra">${e(extra)}</div>` : ''}
+      </div>`).join('')}
+    </div>
+    <details class="chart-values"><summary>Read exact values</summary>${table(e(title), [
+      'Period or record', ...series.map(e), ...(extraHeading ? [e(extraHeading)] : []),
+    ], rows.map(({ label, values, extra }) => [e(label), ...values.map((value) => e(format(value))), ...(extraHeading ? [e(extra)] : [])]))}</details>
+  </figure>`;
+}
+
+const compactRupees = new Intl.NumberFormat('en-IN', { notation: 'compact', style: 'currency', currency: 'INR', maximumFractionDigits: 1 });
+const moneyTick = (paise) => compactRupees.format(paise / 100);
+
 function cashTrendPanel() {
   const trend = monthlyCashTrend(state.payments, state.expenses, (financeMonth.length === 4 ? financeMonth + '-12' : financeMonth) || today().slice(0, 7));
-  const scale = Math.max(0, ...trend.map(({ received, spent }) => Math.max(received, spent)));
   const label = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' });
-  return `<section class="panel finance-table">
-    <div class="panel-head"><div><h2>Cash trend</h2><p>Receipts, expenses, and net cash over six months.</p></div></div>
-    ${scale ? `<div class="cash-trend">${trend.map(({ period, received, spent, net }) =>
-      `<div class="cash-month"><strong>${label.format(Date.parse(period + '-01T12:00:00Z'))}</strong>
-        <div class="cash-month-values">
-          <span class="cash-value"><span>Received ${money(received)}</span><i class="cash-bar received" aria-hidden="true" style="--share:${received / scale * 100}%"></i></span>
-          <span class="cash-value"><span>Expenses ${money(spent)}</span><i class="cash-bar spent" aria-hidden="true" style="--share:${spent / scale * 100}%"></i></span>
-          <span class="cash-value"><span>Profit or loss ${money(net)}</span><i class="cash-bar ${net < 0 ? 'spent' : 'received'}" aria-hidden="true" style="--share:${Math.abs(net) / scale * 100}%"></i></span>
-        </div>
-      </div>`).join('')}</div>` : empty('No receipts or expenses in these six months.')}
-  </section>`;
+  const chart = comparisonChart({ title: 'Cash flow', description: 'Six months of recorded receipts and expenses in INR.',
+    rows: trend.map(({ period, received, spent, net }) => ({
+      label: label.format(Date.parse(period + '-01T12:00:00Z')), values: [received, spent], extra: money(net),
+    })), series: ['Receipts', 'Expenses'], format: money, tickFormat: moneyTick, extraHeading: 'Net cash' });
+  return `<section class="panel finance-table">${chart || `<div class="panel-head"><h2>Cash flow</h2></div>
+    ${empty('No receipts or expenses in these six months.')}`}</section>`;
 }
 
 function cashGrowthPanel() {
@@ -915,11 +1037,11 @@ function notificationsPage() {
   const notices = reminders();
   const operations = state.operationNotices;
   const mobile = mobileAlertControls();
-  return `${heading('Notifications', 'Reminders for your assigned work.')}
-    ${deviceChecks(mobile)}
+  return `${heading('Notifications', '', [...notices, ...operations].some((notice) => !notice.read_at) ?
+    actionButton('Mark all read', 'read', 'check-check', 'secondary') : '')}
+    <div class="notification-layout"><div class="stack">
     <section class="panel">
-      <div class="panel-head"><div><h2>${actor() ? `Reminders for ${e(actor().name)}` : 'Work reminders'}</h2></div>
-      ${[...notices, ...operations].some((notice) => !notice.read_at) ? actionButton('Mark all read', 'read', 'check-check', 'secondary') : ''}</div>
+      <div class="panel-head"><h2>Schedule reminders</h2></div>
       ${notices.length ? notices.map((notice) => `<div class="notice-row">
         ${tile('bell', 'peach')}<div><h3>${e(notice.title)}</h3>
         <p>Scheduled for ${shortDate.format(notice.start_at)} at ${time(notice.start_at)} IST</p></div>${notice.read_at ? '' : tag('Unread', 'peach')}
@@ -935,11 +1057,11 @@ function notificationsPage() {
             ${canChange && notice.title === 'Task finishes soon' ? actionButton('Request time extension', 'task-change', 'clock-3', 'secondary', task.id) :
               task ? actionButton('View task', 'details', 'arrow-right', 'secondary', task.id) : ''}</div></div>`;
       }).join('') : empty('No assignment or approval notifications yet.')}
-    </section>`;
+    </section></div>${deviceChecks(mobile)}</div>`;
 }
 
 const operationsViews = createOperationsViews({
-  actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today,
+  actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today, employee,
 });
 
 const reviewViews = createReviewViews({
@@ -959,6 +1081,7 @@ const scopedViews = createScopedViews({
 
 const revenueViews = createRevenueViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, day, today, table, money, duration, render,
+  chart: comparisonChart, moneyTick,
 });
 
 const footageViews = createFootageViews({
@@ -967,6 +1090,7 @@ const footageViews = createFootageViews({
 
 const worksheetViews = createWorksheetViews({
   actor, state: () => state, manager, e, actionButton, heading, openDialog, entryForm, empty, applyAction, time, today, day, table, duration, money, render,
+  chart: comparisonChart,
   availableTravel: () => shoots().filter((task) => assignedTo(task, actorId) && !task.completed_at && !task.is_open && task.shoot_status === 'booked'),
 });
 
@@ -1015,6 +1139,7 @@ const pages = {
 function render() {
   if (!actor()) return;
   document.body.classList.remove('signed-out');
+  main.dataset.view = page;
   displayedDate = today();
   shownShootIds = shootIds();
   renderChrome();
@@ -1048,15 +1173,19 @@ function tick() {
   const hours = document.querySelector('#today-hours');
   if (hours) hours.textContent = hrViews.todayClock();
   const target = document.querySelector('#work-target');
-  if (target) target.textContent = workTargetLabel();
+  if (target) {
+    const work = hrViews.workTarget();
+    target.textContent = workTargetLabel(work);
+    const progress = document.querySelector('.clock-progress');
+    if (progress) progress.value = Math.floor(work.actual / 60_000);
+  }
   document.querySelectorAll('[data-elapsed]').forEach((element) => {
     const task = state.tasks.find((item) => item.id === Number(element.dataset.elapsed));
     if (task) element.textContent = elapsed(task);
   });
 }
 
-function workTargetLabel() {
-  const { required, remaining, aboveTarget } = hrViews.workTarget();
+function workTargetLabel({ required, remaining, aboveTarget }) {
   if (!required) return 'No working-hours target today.';
   return `${duration(required)} target · ${aboveTarget ? duration(aboveTarget) + ' above target' : remaining ? duration(remaining) + ' remaining' : 'Target met'}`;
 }
@@ -1099,6 +1228,7 @@ function clearWorkspace(info) {
   clockTarget = '';
   employeeFilter = 'all';
   scheduleFilter = 'upcoming';
+  scheduleLimit = 16;
   hrViews?.reset();
   operationsViews.reset();
   worksheetViews.reset();
@@ -1198,6 +1328,13 @@ async function loadSession() {
     session = info;
     showAuthStatus();
     if (info.actor) {
+      state = { ...initialState(), employees: [info.actor] };
+      actorId = info.actor.id;
+      snapshot = undefined;
+      stateTag = undefined;
+      initialLoadError = false;
+      page = currentPage();
+      render();
       await refresh({ force: true });
       return;
     }
@@ -1224,7 +1361,7 @@ function openDialog(title, subtitle, body) {
 
 dialog.addEventListener('keydown', (event) => {
   if (event.key !== 'Tab') return;
-  const items = [...dialog.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')]
+  const items = [...dialog.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')]
     .filter((item) => !item.disabled && item.tabIndex >= 0 && item.getClientRects().length);
   const index = items.indexOf(document.activeElement);
   const target = event.shiftKey && index <= 0 ? items.at(-1) :
@@ -1242,9 +1379,13 @@ function entryForm(kind, fields, label, cancel = true) {
 }
 
 function profileForm({ note, version }) {
-  openDialog('My profile', e(actor().email), `
-    <div class="card-actions">${actionButton('Change password', 'change-password', 'key-round', 'secondary')}
-    ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', actorId)}</div>
+  const person = actor();
+  openDialog('My profile', '', `
+    <div class="profile-summary">${avatar(person)}<div>
+      <strong>${e(person.name)}</strong><p>${e(person.role)} · ${e(person.email)}</p>
+    </div></div>
+    <div class="card-actions profile-controls">${actionButton('Change password', 'change-password', 'key-round', 'secondary')}
+      ${actionButton('Profile photos', 'profile-files', 'image', 'secondary', actorId)}</div>
     ${entryForm('profile/notes', `<input type="hidden" name="version" value="${version}">
       <label class="full">Private notepad<textarea name="note" rows="6" maxlength="6000">${e(note)}</textarea></label>`, 'Save notes')}
   `);
@@ -1399,14 +1540,16 @@ async function filesDialog(kind, record) {
   const label = kind === 'profile' ? 'PNG or JPEG, up to 3 MB' : 'PNG, JPEG or PDF, up to 10 MB';
   openDialog(fileContextNames[kind], label, `
     <div class="operation-stack">
-      ${items.length ? items.map((item) => `<div class="notice-row">
-        ${kind === 'profile' ? `<img class="profile-photo-preview" src="/api/files/${e(item.id)}?preview=1" alt="Uploaded profile photo" width="64" height="64">` : ''}
-        <div><a class="text-link" href="/api/files/${e(item.id)}">${e(item.name)}</a>
+      ${items.length ? `<ul class="file-register">${items.map((item) => `<li class="file-entry">
+        ${kind === 'profile' ? `<img class="profile-photo-preview" src="/api/files/${e(item.id)}?preview=1" alt="Uploaded profile photo" width="64" height="64">` : tile('file-text', 'neutral')}
+        <div class="file-name"><a class="text-link" href="/api/files/${e(item.id)}">${e(item.name)}</a>
         <p>${item.id === active ? 'Active photo · ' : ''}${Math.ceil(item.byte_length / 1024)} KB · ${shortDate.format(item.created_at)}</p></div>
+        <div class="card-actions">
         ${kind === 'profile' && item.id !== active ? `<button class="btn secondary" type="button" data-action="activate-photo"
           data-id="${record}" data-file-id="${e(item.id)}">Use photo</button>` : ''}
         ${item.id !== task?.completion_file_id && (kind !== 'task' || manager() || item.uploaded_by === actorId)
-          ? `<button type="button" class="btn secondary" data-action="remove-file" data-kind="${kind}" data-id="${record}" data-file-id="${e(item.id)}">Remove file</button>` : ''}</div>`).join('')
+          ? `<button type="button" class="btn secondary" data-action="remove-file" data-kind="${kind}" data-id="${record}" data-file-id="${e(item.id)}">Remove file</button>` : ''}
+        </div></li>`).join('')}</ul>`
       : empty('No files uploaded.')}
       ${canAdd ? entryForm('local-file', `
         <input type="hidden" name="kind" value="${kind}">
@@ -1625,7 +1768,7 @@ function showScheduleConflicts(form, conflicts) {
 }
 
 function taskDialog(task) {
-  openDialog(e(task.title), e(task.category) + (task.category === 'Photo shoot' && task.completed_at ? ' · Done' : ''), taskCard(task, true));
+  openDialog(e(task.title), e(task.category), taskDetails(task));
   dialog.dataset.taskId = task.id;
 }
 
@@ -1902,6 +2045,8 @@ async function mutate(button, callback) {
   if (pending) return;
   pending = true;
   const controls = button.closest('dialog, .card-actions, .hr-clock-buttons')?.querySelectorAll('button:not(:disabled, [data-action="close"])') ?? [button];
+  const form = button.closest('form');
+  form?.setAttribute('aria-busy', 'true');
   controls.forEach((control) => { control.disabled = true; });
   try {
     await callback();
@@ -1910,6 +2055,7 @@ async function mutate(button, callback) {
   } finally {
     pending = false;
     controls.forEach((control) => { control.disabled = false; });
+    form?.removeAttribute('aria-busy');
     updateTracking();
   }
 }
@@ -2064,6 +2210,7 @@ function applyAction(button, path, body, message, close = false) {
 }
 
 document.addEventListener('click', (event) => {
+  if (mobileMenu && event.target.closest('#sidebar [aria-current="page"]')) setMobileMenu(false);
   const toggle = event.target.closest('[data-password-toggle]');
   if (toggle) {
     togglePassword(toggle);
@@ -2161,9 +2308,7 @@ document.addEventListener('click', (event) => {
       refresh({ force: true }).catch(() => {});
       break;
     case 'menu':
-      mobileMenu = !mobileMenu;
-      sidebar.classList.toggle('open', mobileMenu);
-      button.setAttribute('aria-expanded', String(mobileMenu));
+      setMobileMenu(!mobileMenu, button);
       break;
     case 'sign-out':
       mutate(button, async () => {
@@ -2329,9 +2474,17 @@ document.addEventListener('click', (event) => {
       break;
     case 'schedule-filter':
       scheduleFilter = value;
+      scheduleLimit = 16;
       render();
       main.querySelector('[data-action="schedule-filter"][aria-pressed="true"]')?.focus();
       break;
+    case 'extend-schedule': {
+      const start = scheduleLimit;
+      scheduleLimit += 16;
+      render();
+      main.querySelectorAll('.agenda-section')[start]?.querySelector('button')?.focus();
+      break;
+    }
     case 'clock': clockAction(button, id || Number(clockTarget) || null); break;
     case 'task-timer':
       applyAction(button, 'task-action', { taskId: id, action: value },
@@ -2459,6 +2612,7 @@ document.addEventListener('change', (event) => {
   if (input.id === 'clock-target') clockTarget = input.value;
   if (input.id === 'schedule-employee') {
     employeeFilter = input.value;
+    scheduleLimit = 16;
     render();
     main.querySelector('#schedule-employee')?.focus();
   }

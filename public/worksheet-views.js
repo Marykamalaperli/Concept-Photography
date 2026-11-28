@@ -5,7 +5,7 @@ const numericFields = ['required', 'actual', 'remaining', 'overtime', 'office', 
 const fieldLabels = ['Required', 'Worked', 'Remaining', 'Overtime', 'Office', 'Shoot', 'Travel', 'Lunch', 'Personal', 'Away', 'Late', 'Early', 'GPS unverified'];
 
 export function createWorksheetViews(ui) {
-  const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, applyAction, empty, table, today, day, time, duration, money } = ui;
+  const { state, manager, actor, e, actionButton, heading, entryForm, openDialog, applyAction, empty, table, today, day, time, duration, money, chart } = ui;
   let report;
   let filters;
   let version = 0;
@@ -47,6 +47,15 @@ export function createWorksheetViews(ui) {
     const totals = report.days.reduce((sum, row) => ({
       worked: sum.worked + row.actual, target: sum.target + row.required, overtime: sum.overtime + row.overtime,
     }), { worked: 0, target: 0, overtime: 0 });
+    const hours = report.days.slice(-7).map((row) => ({ label: row.date, values: [row.actual, row.required] }));
+    const durations = report.tasks.map((row) => ({ label: row.title, values: [taskElapsed(row.id), row.estimate * minute] }))
+      .filter(({ values }) => values[0] > 0).slice(-6);
+    const charts = [
+      hours.length > 1 && chart({ title: 'Hours by day', description: 'Worked hours and target for up to seven days in this report.',
+        rows: hours, series: ['Worked', 'Target'], format: duration }),
+      durations.length > 1 && chart({ title: 'Task duration', description: 'Up to six tasks with time recorded in this report.',
+        rows: durations, series: ['Recorded', 'Estimated'], format: duration }),
+    ].filter(Boolean);
     return `<div id="worksheet-print" class="operation-stack">
       <section class="panel"><div class="panel-head"><div><h2>${e(report.employee.name)}</h2><p>${e(report.from)} to ${e(report.to)} · IST</p></div></div>
         <dl class="worksheet-totals"><div><dt>Worked</dt><dd>${duration(totals.worked)}</dd></div>
@@ -67,6 +76,7 @@ export function createWorksheetViews(ui) {
           <div><dt>Revenue contribution</dt><dd>${money(report.revenueContribution)}</dd></div>
         </dl>
       </section>
+      ${charts.length ? `<div class="report-charts">${charts.map((item) => `<section class="panel">${item}</section>`).join('')}</div>` : ''}
       ${reportTable('Daily hours', ['Date', 'In', 'Out', ...fieldLabels, 'Policy date'], report.days.map((row) => [
         e(row.date), row.in == null ? '—' : time(row.in), row.out == null ? '—' : time(row.out),
         ...numericFields.map((key) => row[key] == null ? '—' : duration(row[key])),
@@ -94,7 +104,7 @@ export function createWorksheetViews(ui) {
       ${actionButton('Export CSV', 'worksheet-csv', 'download', 'secondary')}
       ${actionButton('Print or save PDF', 'worksheet-print', 'printer', 'secondary')}</div>` : '';
     return `${heading('Worksheets', 'Compare recorded hours with attendance, breaks, travel and task estimates.', actions)}
-      <div class="operation-stack"><section class="panel">${entryForm('worksheet', `
+      <div class="operation-stack"><section class="panel report-filters">${entryForm('worksheet', `
         ${manager() ? `<label class="full">Employee<select name="employeeId">
           ${state().employees.map((person) => `<option value="${person.id}"${person.id === Number(chosen.employeeId) ? ' selected' : ''}>${e(person.name)}</option>`).join('')}
         </select></label>` : ''}
