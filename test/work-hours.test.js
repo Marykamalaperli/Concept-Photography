@@ -42,6 +42,20 @@ test('approved leave, holidays and time corrections apply without fabricating a 
   assert.equal(dailyHours({ ...input, holidays: [{ day: date }] }).required, 0);
 });
 
+test('open work periods affect only the dates they overlap', () => {
+  const followingDay = 24 * 60 * minute;
+  const input = { date, now: at(12) + followingDay, employee, settings, holidays: [],
+    attendance: [shift(at(9), at(17))] };
+  const historical = dailyHours({ ...input, periods: [period('travel', at(9) + followingDay, null)] });
+  assert.equal(historical.out, at(17));
+  assert.equal(historical.early, 60 * minute);
+  assert.equal(historical.travel, 0);
+
+  const overnight = dailyHours({ ...input, periods: [period('travel', at(23), null)] });
+  assert.equal(overnight.out, null);
+  assert.equal(overnight.travel, 60 * minute);
+});
+
 test('performance compares eligible work and skips approval, GPS, travel and revised schedule exceptions', async () => {
   const { summarizeWork } = await import('../lib/performance.js');
   const tracked = { id: 1, title: 'Assigned editing', category: 'Editing', assigned: 1, start_at: at(9), estimate: 60,
