@@ -51,6 +51,7 @@ The online backup uses SQLite’s snapshot API. Backup rotation only applies to 
 - Company location accepts the primary office and up to nine additional pins. Business settings define the office and shoot radii, maximum GPS accuracy, and two to four consistent observations for automatic departure and return. Keep the browser open for reliable tracking.
 - The time clock supports timed lunch, personal breaks and assigned shoot travel. End shift can close attendance when GPS is unavailable. The recorded departure and any gaps, missing plan or hours shortfall go to the administrator in Approvals. Checkout and travel can also be used between locations. Employees should choose End shift when finishing the working day.
 - Worksheets use Asia/Kolkata dates. Daily totals apply the break and travel rules effective on each date and account for overlapping intervals once. Weekly reports run Monday–Sunday. CSV opens in Excel, and the print view supports PDF. The shift review retains the policy date and totals recorded when the shift ended.
+- Employee responses and worksheets return a location-recorded indicator for each clock event. The employee’s assigned site pin, verification times and recorded hours remain available for geofence tracking and attendance review. The administrator’s Attendance page can display the precise recorded fix until the configured retention policy clears it.
 
 ## Projects, evidence and revenue
 

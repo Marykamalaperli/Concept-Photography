@@ -289,6 +289,39 @@ test('additional office pins and GPS accuracy settings authorize only matching r
   assert.equal(JSON.parse(shift.site).maxAccuracy, 25);
 });
 
+test('attendance does not return precise device fixes to employees or in worksheets', async (t) => {
+  const now = Date.parse('2026-11-28T10:00:00+05:30');
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const { db, manager, staff, other } = await fixture(t);
+  const pin = { name: 'Office', address: 'Studio building', latitude: 17.38, longitude: 78.48 };
+  const fix = { latitude: 17.38002, longitude: 78.48002, accuracy: 5 };
+  const recorded = JSON.stringify({ label: 'Location recorded' });
+  await manager('office', pin);
+  const shift = await staff('attendance', { action: 'in', location: { ...fix, capturedAt: now } });
+  assert.equal(shift.in_location, recorded);
+  assert.equal(JSON.parse(shift.site).latitude, pin.latitude);
+  t.mock.timers.setTime(now + minute);
+  await assert.rejects(other('attendance', { action: 'out', shiftId: shift.id, location: { ...fix, capturedAt: Date.now() } }), { status: 409 });
+  const departure = await staff('attendance', { action: 'out', shiftId: shift.id, location: { ...fix, capturedAt: Date.now() } });
+  assert.equal(departure.out_location, recorded);
+  const state = await staff('state');
+  assert.equal(state.attendance[0].in_location, recorded);
+  assert.equal(state.attendance[0].out_location, recorded);
+  assert.equal((await other('state')).attendance.length, 0);
+  const report = { date: studioDay(now), period: 'day', employeeId: 2 };
+  await assert.rejects(other('worksheet', report), { status: 403 });
+  for (const call of [staff, manager]) {
+    const worksheet = await call('worksheet', report);
+    assert.equal(worksheet.attendance[0].in_location, recorded);
+    assert.equal(worksheet.attendance[0].out_location, recorded);
+    assert.equal(worksheet.days[0].actual, minute);
+  }
+  assert.deepEqual(JSON.parse((await manager('state')).attendance[0].out_location), fix);
+  const persisted = await db.get('SELECT in_location, out_location FROM attendance WHERE id = ?', shift.id);
+  assert.deepEqual(JSON.parse(persisted.in_location), fix);
+  assert.deepEqual(JSON.parse(persisted.out_location), fix);
+});
+
 test('completed shoots queue one private footage verification and require storage-manager evidence plus approval', async (t) => {
   const { db, manager, staff, other } = await fixture(t);
   const shoot = await manager('tasks', {
