@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 import { parseEnv, promisify } from 'node:util';
 
@@ -35,10 +35,11 @@ test('Windows setup prepares separate storage paths and preserves existing confi
 
   await setup(...configure);
   const saved = await readFile(dotenv, 'utf8');
-  assert.deepEqual({ ...parseEnv(saved) }, {
-    BACKUP_DIRECTORY: backup.replaceAll('\\', '/'), DATABASE_PATH: join(data, 'workforce.sqlite').replaceAll('\\', '/'),
-    ENABLE_WEB_PUSH: '0', HOST: '127.0.0.1', PORT: '3487',
-  });
+  const { DATABASE_PATH: databasePath, BACKUP_DIRECTORY: backupPath, ...settings } = parseEnv(saved);
+  assert.deepEqual(settings, { ENABLE_WEB_PUSH: '0', HOST: '127.0.0.1', PORT: '3487' }, 'Unexpected loopback settings');
+  assert.equal(basename(databasePath), 'workforce.sqlite', 'Unexpected SQLite filename');
+  assert.equal(await realpath(dirname(databasePath)), await realpath(data), 'Unexpected SQLite directory');
+  assert.equal(await realpath(backupPath), await realpath(backup), 'Unexpected backup directory');
   assert.equal((await stat(data)).isDirectory(), true);
   assert.equal((await stat(backup)).isDirectory(), true);
   assert.match((await setup(...configure.slice(0, -2), '-Port', '3488')).stdout, /Existing configuration preserved/);
