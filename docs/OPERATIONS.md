@@ -37,6 +37,8 @@ node .\scripts\database-backup.js verify D:\ConceptBackups\YOUR-SNAPSHOT.sqlite
 
 The online backup uses SQLite’s snapshot API. Backup rotation only applies to workspace snapshot filenames in the configured directory. Restoration always writes a new file. For production recovery, stop the workspace, retain the current database, and select the verified recovery file using `DATABASE_PATH`. Restart and run the health check and a sign-in test. For a code rollback after a schema migration, restore both the previous commit and its corresponding verified snapshot. Store at least one protected backup separately from the data drive.
 
+Record the reviewed commit and the database and attachment locations for each verified backup. Test `npm run migration:rehearse` against the pinned candidate, then rehearse the separate Windows backup and restore commands on the office machine using synthetic records. [Office acceptance](PRODUCTION_ACCEPTANCE.md)
+
 ## Troubleshooting
 
 - **Cannot sign in after migration**. Verify the configured database and re-enroll the administrator under the same email. Employee password resets are available in Employees.

@@ -19,4 +19,4 @@ Move the studio’s admin and employee portals to Node.js 24 and SQLite. This br
 
 ## Review and release
 
-Review and test the branch before planning office installation. The acceptance checklist covers physical phones, screen readers, office network performance, trusted HTTPS, deployment and migration.
+The office-readiness feature reviews and integrated commits are tracked separately. The `v1.0.0-rc.1` rehearsal package adds guided Windows setup, GPS privacy, safe shutdown and update recovery, and a synthetic import-to-restore verification command. The acceptance checklist covers physical phones, screen readers, office network performance, trusted HTTPS, deployment and migration. [Branch tracker](BRANCH_TRACKER.md) · [Release notes](RELEASE_NOTES.md)

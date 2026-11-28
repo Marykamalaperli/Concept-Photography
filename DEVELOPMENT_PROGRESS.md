@@ -2,6 +2,8 @@
 
 The self-hosted workspace runs on Node.js 24 and local SQLite. The frontend redesign starts at `ada6b2f` on `self-hosted-workspace-migration`. The complete inventory covers 60 original requirements, 21 continuation requirements, 24 pre-rehearsal requirements and 24 frontend requirements. [Requirements matrix](docs/REQUIREMENTS_MATRIX.md)
 
+The six office-readiness phases build on the verified `358459a` development commit and advance through separate feature branches. The reviewed candidate and office acceptance procedures are documented alongside the exact integration records. [Branch tracker](docs/BRANCH_TRACKER.md) · [Release notes](docs/RELEASE_NOTES.md)
+
 | Area | Development result |
 | --- | --- |
 | Access | Role permissions are checked alongside explicit client and project grants. Revocation takes effect on the next request. Staff photos use private uploads and an active profile photo. Account and business activity share a searchable administrator audit history. |
