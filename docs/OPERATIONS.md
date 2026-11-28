@@ -42,6 +42,7 @@ The online backup uses SQLite’s snapshot API. Backup rotation only applies to 
 - **Cannot sign in after migration**. Verify the configured database and re-enroll the administrator under the same email. Employee password resets are available in Employees.
 - **GPS unavailable on a phone**. Check the HTTPS certificate, location permission, and browser status. Compare the coordinates using Device checks.
 - **Health check fails**. Use the local URL first. Check the server output, `data/logs`, or Task Scheduler history, `.env`, and the database directory permissions. Then test the proxy’s HTTPS address.
+- **Controlled shutdown**. For a foreground server, use Ctrl+C and check for the shutdown confirmation in the console. With a managed service on Linux, send SIGTERM and wait for the same confirmation. The server finishes accepted requests and running maintenance before closing SQLite. Check the Windows Task Scheduler stop and restart behavior during office acceptance.
 - **Calendar events lag**. Check that the calendar device can reach the office hostname and that its subscription is active. Calendar providers refresh on their own schedules.
 - **Backups are missing**. Check the Windows backup task’s result, writable destination and free storage. Run a manual backup and verify the result before retrying the task.
 

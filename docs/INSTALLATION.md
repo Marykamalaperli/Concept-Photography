@@ -87,7 +87,7 @@ Review the commit on GitHub, schedule downtime, take the proxy out of service, a
 .\scripts\health-check.ps1 -BaseUrl https://workspace.your-domain.example
 ```
 
-The script backs up the database before checkout. Record its printed previous commit and backup path. An update that changes the schema may require switching to the verified backup when reverting the code. [Recovery procedure](OPERATIONS.md#backup-and-recovery)
+The script verifies that the full commit SHA is on `main` and backs up the database and private files before checkout. Record its printed previous commit and backup path. If dependency installation fails, the script attempts to restore the previous source and dependencies before returning an error. Keep the service stopped if either recovery step fails. An update that starts and changes the schema may require switching to the verified backup before reverting the code. [Recovery procedure](OPERATIONS.md#backup-and-recovery)
 
 Once the office server and migrated data are verified, set the `WORKSPACE_URL` repository variable to the office HTTPS URL. In GitHub, use **Settings → Pages → GitHub Actions**. Run **Actions → Publish approved office launcher** on `main` and confirm the cutover in the workflow input. Recheck the destination, HTTPS, and sign-in before announcing the switch.
 

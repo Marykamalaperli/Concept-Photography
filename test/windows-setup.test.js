@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
@@ -44,4 +44,43 @@ test('Windows setup prepares separate storage paths and preserves existing confi
   assert.equal((await stat(backup)).isDirectory(), true);
   assert.match((await setup(...configure.slice(0, -2), '-Port', '3488')).stdout, /Existing configuration preserved/);
   assert.equal(await readFile(dotenv, 'utf8'), saved);
+});
+
+test('Windows update restores the previous release when dependency installation fails', { skip: process.platform !== 'win32' }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'concept-update-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const scripts = join(directory, 'scripts');
+  await mkdir(scripts);
+  await copyFile(new URL('../scripts/update.ps1', import.meta.url), join(scripts, 'update.ps1'));
+  await writeFile(join(scripts, 'backup.ps1'), "Add-Content $env:CONCEPT_TEST_UPDATE_LOG 'backup'\n");
+  const previous = 'a'.repeat(40);
+  const approved = 'b'.repeat(40);
+  const scenario = join(directory, 'scenario.ps1');
+  await writeFile(scenario, `
+function global:git {
+    $global:LASTEXITCODE = 0
+    switch ($args[0]) {
+        'rev-parse' { '${previous}' }
+        'checkout' { Add-Content $env:CONCEPT_TEST_UPDATE_LOG ('checkout ' + $args[2]) }
+    }
+}
+function global:npm.cmd {
+    if ($global:TestInstallAttempted) {
+        Add-Content $env:CONCEPT_TEST_UPDATE_LOG 'restore dependencies'
+        $global:LASTEXITCODE = 0
+    } else {
+        $global:TestInstallAttempted = $true
+        Add-Content $env:CONCEPT_TEST_UPDATE_LOG 'install failed'
+        $global:LASTEXITCODE = 17
+    }
+}
+function global:Get-ScheduledTask {}
+function global:Read-Host { 'STOPPED' }
+& (Join-Path $PSScriptRoot 'scripts/update.ps1') -ApprovedCommit '${approved}'
+`);
+  const log = join(directory, 'events.txt');
+  await assert.rejects(run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File', scenario],
+    { timeout: 30_000, windowsHide: true, env: { ...process.env, CONCEPT_TEST_UPDATE_LOG: log } }), /previous checkout and dependencies were restored/);
+  assert.deepEqual((await readFile(log, 'utf8')).trim().split(/\r?\n/),
+    ['backup', 'checkout ' + approved, 'install failed', 'checkout ' + previous, 'restore dependencies']);
 });
