@@ -4,7 +4,7 @@
 
 | Phase and branch | Objective | Starting commit | Latest commit | Status | Evidence and outstanding work |
 | --- | --- | --- | --- | --- | --- |
-| 1 · `feature/final-code-review` | Review core workflows, correct defects and enable feature CI | `358459a` | [Feature branch](https://github.com/Marykamalaperli/Concept-Photography/tree/feature/final-code-review) | Testing | Date-scoped work periods and a cross-day regression test. [Compare](https://github.com/Marykamalaperli/Concept-Photography/compare/self-hosted-workspace-migration...feature/final-code-review?expand=1) · [Actions](https://github.com/Marykamalaperli/Concept-Photography/actions?query=branch%3Afeature%2Ffinal-code-review) |
+| 1 · `feature/final-code-review` | Review core workflows, correct defects and enable feature CI | `358459a` | [Feature branch](https://github.com/Marykamalaperli/Concept-Photography/tree/feature/final-code-review) | Testing | Date-scoped work periods and worksheet filters that survive an asynchronous refresh. [Compare](https://github.com/Marykamalaperli/Concept-Photography/compare/self-hosted-workspace-migration...feature/final-code-review?expand=1) · [Actions](https://github.com/Marykamalaperli/Concept-Photography/actions?query=branch%3Afeature%2Ffinal-code-review) |
 | 2 · `feature/windows-setup-wizard` | Guided installation, startup and beginner instructions | After phase 1 | — | Planned | [Windows installation](INSTALLATION.md) |
 | 3 · `feature/security-hardening` | Authorization, employee privacy and negative tests | After phase 2 | — | Planned | [Operations and security](OPERATIONS.md) |
 | 4 · `feature/server-reliability` | Recovery, maintenance, logs and safe updates | After phase 3 | — | Planned | [Recovery procedures](OPERATIONS.md#backup-and-recovery) |
