@@ -1,4 +1,4 @@
-const cacheName = 'concept-offline-v1';
+const cacheName = 'concept-offline-v2';
 const offlinePage = new URL('offline.html', self.registration.scope);
 
 self.addEventListener('install', (event) => event.waitUntil((async () => {

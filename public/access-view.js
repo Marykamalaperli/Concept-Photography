@@ -45,11 +45,10 @@ export function accessView({ title, description, content }) {
         <img src="./sign-in.webp" width="600" height="750" alt="" fetchpriority="high">
       </picture>
       <img class="auth-brand" src="./sign-in-logo.png" width="108" height="154" alt="" fetchpriority="low">
-      <div class="auth-aside-copy"><h2>Concept Photography</h2></div>
+      <div class="auth-aside-copy"><span aria-hidden="true"></span><h2>Concept<br>Photography</h2></div>
     </section>
     <section class="auth-content" aria-labelledby="access-title">
       <div class="auth-form">
-        <div class="auth-mark">${accessIcon('key-round')}</div>
         <h1 id="access-title">${title}</h1>
         <p class="auth-description">${description}</p>
         ${content}

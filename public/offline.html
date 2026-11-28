@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#23261a">
   <title>Offline · Concept Photography</title>
   <style>
-    body{margin:0;padding:8vh max(6vw,1.25rem);color:#231e1b;background:#f7f6f3;font:1rem/1.6 system-ui,sans-serif}
-    main{max-width:36rem} p{color:#625851} a{color:#8c3925;text-underline-offset:.2em}
+    *{box-sizing:border-box}
+    body{margin:0;padding:clamp(24px,11vh,100px) 16px;color:#282a20;background:#f3f2e9;font:1rem/1.5 system-ui,sans-serif}
+    main{max-width:35rem;margin:auto;background:#fffdf7;border:1px solid #dcd9cb;border-top:3px solid #444e2d;padding:clamp(20px,5vw,40px);border-radius:0 0 6px 6px}
+    h1{font-size:clamp(25px,4vw,36px);line-height:1.12;margin:8px 0 16px;letter-spacing:-.025em}
+    p{color:#5d5e50}
+    .brand-name{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin:0}
+    a{display:inline-flex;align-items:center;min-height:44px;margin-top:10px;color:#fff;background:#444e2d;padding:8px 12px;border-radius:6px}
+    a:focus-visible{outline:2px solid #6c632c;outline-offset:3px}
   </style>
 </head>
 <body>
   <main>
+    <p class="brand-name">Concept Photography</p>
     <h1>Workspace offline</h1>
     <p>Reconnect to use attendance, schedules, and studio records.</p>
     <a href="/">Try the workspace again</a>
