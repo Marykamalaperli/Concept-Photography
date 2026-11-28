@@ -20,6 +20,7 @@ permissions:
 jobs:
   checks:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -30,7 +31,21 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm test
+      - if: runner.os == 'Linux'
+        run: npm test
+      - if: runner.os == 'Windows'
+        name: Run Windows tests
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          npm test 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\concept-test.log"
+          if ($LASTEXITCODE -ne 0) {
+            Add-Content $env:GITHUB_STEP_SUMMARY '### Windows regression test output'
+            Add-Content $env:GITHUB_STEP_SUMMARY '```text'
+            Get-Content "$env:RUNNER_TEMP\concept-test.log" -Tail 70 | Add-Content $env:GITHUB_STEP_SUMMARY
+            Add-Content $env:GITHUB_STEP_SUMMARY '```'
+            exit 1
+          }
       - if: runner.os == 'Linux'
         name: Audit dependencies
         run: npm audit --audit-level=high

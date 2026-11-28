@@ -12,8 +12,10 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $node = (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 $npm = (Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 if (!$node -or !$npm) { throw 'Install Node.js 24 with npm, then open a new PowerShell window.' }
-$version = & $node -p 'Number(process.versions.node.split(".")[0])'
-if ($LASTEXITCODE -ne 0 -or [int]$version -lt 24) { throw 'Install Node.js 24 or newer.' }
+$version = & $node --version
+if ($LASTEXITCODE -ne 0 -or $version -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 24) {
+    throw 'Install Node.js 24 or newer.'
+}
 
 function Get-OfficePath([string]$Path) {
     if ($Path -notmatch '^[A-Za-z]:[/\\]' -or $Path -match '[\x00-\x1f"]') {
