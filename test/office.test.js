@@ -13,6 +13,19 @@ import { openStore } from '../store.js';
 import { sqliteAdapter } from '../sqlite-adapter.js';
 import { createBackup, restoreBackup, verifyDatabase } from '../scripts/database-backup.js';
 import { migrateOffice } from '../scripts/migration/import-office.js';
+import { rehearseOfficeMigration } from '../scripts/migration/rehearse-office.js';
+
+test('synthetic migration reconciles the imported and recovered workspace', async () => {
+  const report = await rehearseOfficeMigration();
+  assert.equal(report.counts.employees, 2);
+  assert.equal(report.counts.payments, 2);
+  assert.equal(report.accountsRequiringEnrollment, 1);
+  assert.equal(report.attendanceMinutes, 60);
+  assert.equal(report.cashProfitPaise, '53502');
+  assert.equal(report.outstandingPaise, '64999');
+  assert.equal(report.restoredAndReconciled, true);
+  assert.equal(report.existingDestinationProtected, true);
+});
 
 test('legacy dry run validates relationships and financial totals before creating a separate SQLite file', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'concept-import-test-'));

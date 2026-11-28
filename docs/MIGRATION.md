@@ -2,7 +2,13 @@
 
 This utility is for the controlled cutover phase. It reads a restricted export and builds a new SQLite file. Production data migration remains a separate, office-side operation.
 
-## Export and rehearse
+## Run the synthetic rehearsal
+
+Run `npm run migration:rehearse` from the checkout. The command generates a version 1 snapshot in a temporary directory, checks it with a dry run, imports it into a new database, and verifies a backup restored to a second file. It compares counts and cash totals, checks the original IDs and attendance duration, requires a new administrator password, and checks that an ordinary employee’s compatible password is preserved. Standard output contains only aggregate evidence. The temporary files are removed on completion.
+
+The expected report includes two employees, one attendance interval, 120,500 paise booked, 55,501 received, 1,999 spent, and 53,502 cash profit. This verifies the snapshot import and recovery path. The authorized hosted export and business reconciliation remain part of office acceptance.
+
+## Export data for an approved cutover
 
 Use an authorized PostgreSQL login and the connection parameters for the existing hosted database. Use a private directory outside the public checkout. Install the PostgreSQL command-line tools on the migration machine. Set the connection values in PowerShell without including a password in the command:
 
@@ -22,7 +28,7 @@ Keep the export private. Compatible employee scrypt hashes are carried over. The
 
 ## Build the cutover database
 
-Before the final export, back up the legacy system, arrange a write freeze, and agree on rollback. Use a new destination path.
+Before the final export, back up the legacy system, arrange a write freeze, and agree on rollback. Record the expected counts for employees, clients, shoots, attendance and financial rows, plus booked, received and spent amounts. Use a new destination path.
 
 ```powershell
 node .\scripts\migration\import-office.js C:\ConceptPrivate\legacy-export.json --output C:\ConceptPrivate\workforce-cutover.sqlite
