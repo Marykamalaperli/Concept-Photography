@@ -157,3 +157,34 @@
 | 22. Production acceptance checklist | Met | Acceptance, INSTALLATION, MIGRATION, OPERATIONS | — | Health | Checklist covers accounts, mobile, GPS, local and remote access, restore, financial reconciliation, production routing and rollback. Real acceptance is deferred. |
 | 23. Updated requirements matrix | Met | This document and final development report | 1–27 | As above | All three briefs are tracked. Partial and deferred items name their limitations and stage. |
 | 24. GitHub review and final report | Partial | Repo, CI, PULL_REQUEST, final development report | — | — | Development pushes and comparison are available. GitHub API access blocked draft PR creation. Office deployment and migration continue after review. |
+
+## Frontend design transformation
+
+All frontend verification uses a temporary SQLite rehearsal. The redesign starts at `ada6b2f` on the existing development branch. [Design system and evidence notes](FRONTEND_DESIGN_SYSTEM.md)
+
+| Requirement | Status | Sources and evidence |
+| --- | --- | --- |
+| 1. Premium frontend enhancement | Met | Studio ledger design applied to the existing admin, employee and reviewer portals. |
+| 2. Discover and apply skills | Met | Cloud desktop and runtime skill guidance used for repository checks and visual QA. Design skill availability is recorded in the design system. |
+| 3. Review the real rehearsal app | Met | Before captures from the seed used by `npm run demo`, including admin, employee and delegated records. |
+| 4. Distinctive creative direction | Met | Three directions considered. Selected studio ledger principles are documented. |
+| 5. Design system | Met | Shared local tokens in `public/access.css` and component rules in `public/styles.css`. |
+| 6. Restraint and purpose | Met | Rule-based summaries, restrained color and role-specific data hierarchy. Existing photography retained on access screens. |
+| 7. Sign-in and launcher | Met | Shared access view, responsive photograph, visible password control, simplified form and separate launcher Lighthouse audit. |
+| 8. Admin dashboard | Met | Today's bookings, actions to review, attendance, availability and monthly cash position in `public/app.js`. |
+| 9. Employee dashboard | Met | Live clock, target progress, priorities, planning, approved records, travel and compact touch controls. |
+| 10. Existing modules | Met | Role route sweep covers directories, report and agenda views, permissions, delivery, attendance and operations. |
+| 11. Information architecture | Met | Grouped authorization-aware navigation, breadcrumbs, mobile dock and keyboard drawer. |
+| 12. Data visualization | Met | Cash flow, contribution and worksheets use a labelled scale and exact-value tables. Finance totals and overdue accounts remain tabular. |
+| 13. Scheduling UX | Met | Date-grouped schedule, weekly and monthly work plans, visible flexible work, crowded-day drill-down and narrow-screen agenda. |
+| 14. Mobile-first | Met | Primary clock actions, safe areas, bottom shortcuts, wide table regions and responsive forms checked from 320 px. |
+| 15. Theme evaluation | Met | Documented a light workspace with dark navigation for this phase. A separate dark theme is left for a full parity pass. |
+| 16. Interaction feedback | Met | Focus, pressed controls, busy forms, status, validation, offline recovery and GPS messages. |
+| 17. Render and iterate | Met | Before, intermediate and after captures. The second pass refined break controls, current cash and notification order. |
+| 18. Responsive checks and screenshots | Met | Inspector and Playwright checks at seven widths with organized synthetic evidence. |
+| 19. Accessibility and performance | Partial | Node, Chromium, axe and Lighthouse evidence covers development. Real assistive-technology and office network verification remain acceptance work. |
+| 20. Preserve backend | Met | Frontend, PWA shell and synthetic demo changes only. Existing Node tests verify unchanged business rules. |
+| 21. Zero subscription | Met | Existing local fonts, icon assets and photography. No new runtime dependency. |
+| 22. Document applicable design guidance | Met | `docs/FRONTEND_DESIGN_SYSTEM.md` records decisions, tools, responsive rules, design evidence and limitations. |
+| 23. Design review package | Met | Before-and-after captures, measured verification, updated development report and review text. |
+| 24. Branch and deployment | Met | Reviewed development branch only. Office acceptance and production release continue in later phases. |

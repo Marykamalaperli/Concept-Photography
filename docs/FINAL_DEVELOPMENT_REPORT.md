@@ -1,8 +1,32 @@
 # Concept Photography final development report
 
-The self-hosted admin and employee workspace is ready for a controlled office rehearsal. Development continued from `56c6c40` on `self-hosted-workspace-migration` with temporary SQLite databases and synthetic records. The migrations preserve the historical work policy of an existing SQLite database or imported legacy records. [GitHub comparison](https://github.com/Marykamalaperli/Concept-Photography/compare/main...self-hosted-workspace-migration?expand=1)
+The self-hosted admin and employee workspace is ready for a controlled office rehearsal. The frontend redesign began at `ada6b2f` on `self-hosted-workspace-migration` and used temporary SQLite databases and synthetic records. [Frontend comparison](https://github.com/Marykamalaperli/Concept-Photography/compare/ada6b2f...self-hosted-workspace-migration) · [Full branch comparison](https://github.com/Marykamalaperli/Concept-Photography/compare/main...self-hosted-workspace-migration?expand=1)
 
-## Delivered
+## Frontend redesign
+
+- The studio ledger design gives the public launcher and sign-in a stronger photographic composition. The admin dashboard puts upcoming shoots, review work, the duty register and cash position near the top. The employee dashboard puts live attendance, GPS status, breaks and work priorities within reach on a phone.
+- Authorized navigation is grouped by responsibility. Shoot and task schedules use chronological rows, and crowded calendar dates open a day view. On phones the shoot calendar opens as an agenda with current and upcoming dates first.
+- Cash, contribution and worksheet charts include scales, clear legends and exact-value tables. Directories, private files, settings, notifications, delegated reviews, task detail and audit history use shared styling with layouts suited to their content.
+- Cloud Environment Desktop and Runtime guidance informed the browser verification and branch workflow. Final captures include desktop and mobile views, a delegated review, and loading, error and offline states. [Design system and visual comparison notes](FRONTEND_DESIGN_SYSTEM.md)
+
+## Frontend verification
+
+- All 35 Node regression tests passed locally and in GitHub Actions on Ubuntu and Windows at frontend commit `5fb0c8e`. Chromium also exercised schedules, approvals, attendance, footage and private files, scoped access, finance and offline recovery with synthetic accounts. [GitHub Actions run](https://github.com/Marykamalaperli/Concept-Photography/actions/runs/46129639923)
+- Chromium ran 280 route and viewport checks for 22 administrator and 18 employee or delegated routes at 320, 375, 390, 768, 1024, 1440 and 1920 px. Axe reported zero violations across 51 checked views and states. Chromium reported zero page errors during the final sweep. Browser checks included Escape and focus recovery, narrow-screen clock buttons, crowded calendar dates, chart values, retry, offline fallback and account isolation.
+- The local public launcher scored 100 for Performance, Accessibility, Best Practices and SEO in both desktop and mobile Lighthouse. Largest Contentful Paint was 0.2 s desktop and 0.9 s mobile. The cache lifetime, image delivery, dependency tree and render-blocking checks passed. `npm audit --audit-level=low` reported zero known vulnerabilities.
+
+### Authenticated timing
+
+Both sign-in variants used copies of the same synthetic SQLite database with 80 employees and 480 shoots. Five measurements per role used fresh Chromium contexts, alternating baseline and redesigned versions on a loopback server. The measured interval starts at sign-in submission and ends when the dashboard’s primary section appears.
+
+| Sign-in | Baseline `ada6b2f` | Redesign |
+| --- | ---: | ---: |
+| Administrator at 1440 px | 280 ms | 291 ms |
+| Employee at 390 px | 243 ms | 264 ms |
+
+Both measured medians remained below 300 ms. The matched medians increased by 11 ms for the administrator and 21 ms for the employee. In the broader redesigned app sweep, workspace API medians were 31 ms and 39 ms respectively, and the finance report rendered in 334 ms. These measurements use the local rehearsal environment. Office network measurements, operating-system screen readers and real phone GPS behavior are part of office acceptance. [Office acceptance checklist](PRODUCTION_ACCEPTANCE.md)
+
+## Self-hosted functionality
 
 - Client and project delegation checks both role permissions and record scope. Task reviews, footage reviews and private evidence follow the same record grants. Profile photos use private uploads. Authorized records use the active photo and fall back to initials. The admin audit groups searchable account activity, staff and project changes, approvals, financial changes, policy versions and recovery evidence.
 - Employee and manager dashboards connect current attendance, breaks, travel, schedules, assignments, reviews, footage, worksheets, notifications and relevant financial summaries. Editing and studio tasks follow the same acknowledgement, timer and completion review rules. Managers can queue footage verification for selected historical shoots.
@@ -12,13 +36,13 @@ The self-hosted admin and employee workspace is ready for a controlled office re
 
 [Requirements matrix](REQUIREMENTS_MATRIX.md) · [Pull request description](PULL_REQUEST.md)
 
-## Verification
+## Self-hosted baseline verification
 
 - The Node.js regression suite has 35 passing tests, up from 31 at the starting commit. New cases cover delegated scope and immediate revocation, dated policy and required evidence, encrypted offline writes and stale versions, and historical detail retention. Expanded coverage verifies profile photo restore, private attachment expiry, historical footage backfill, import policy preservation, conditional state authorization and backup audit evidence. [Ubuntu and Windows checks](https://github.com/Marykamalaperli/Concept-Photography/actions?query=branch%3Aself-hosted-workspace-migration)
 - Chromium exercised both roles and verified 22 administrator routes and 17 employee routes at 320, 375, 390, 768, 1024, 1440 and 1920 pixels. It also exercised mobile offline sign-out and account switching, private photo upload and activation, and reviewed shift and task flows. Axe reported zero violations across 45 checked views, including the delegated desk and selected dialogs. Keyboard checks covered dialog focus and Escape. Screen-reader use and real-device touch and GPS testing belong to the office checklist.
 - The local public launcher scored 100 for performance, accessibility, best practices and SEO on desktop and mobile. The Lighthouse run passed the cache, image delivery, network dependency tree and render-blocking checks. The numbers below measure the authenticated workspace separately.
 
-## Authenticated performance
+## Historical baseline timings
 
 The local test used Chromium with a loopback Node.js server and SQLite populated with 80 employees, 480 clients, 480 projects and 480 shoots, plus attendance, payments, expenses and work queues. The mobile view used a 390 px viewport. Times measure interaction and rendering on the test machine, without office Wi-Fi or mobile network latency.
 
