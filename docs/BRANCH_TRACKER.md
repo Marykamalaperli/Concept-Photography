@@ -4,8 +4,8 @@
 
 | Phase and branch | Objective | Starting commit | Latest commit | Status | Evidence and outstanding work |
 | --- | --- | --- | --- | --- | --- |
-| 1 · `feature/final-code-review` | Review core workflows, correct defects and enable feature CI | `358459a` | [Feature branch](https://github.com/Marykamalaperli/Concept-Photography/tree/feature/final-code-review) | Testing | Date-scoped work periods and worksheet filters that survive an asynchronous refresh. [Compare](https://github.com/Marykamalaperli/Concept-Photography/compare/self-hosted-workspace-migration...feature/final-code-review?expand=1) · [Actions](https://github.com/Marykamalaperli/Concept-Photography/actions?query=branch%3Afeature%2Ffinal-code-review) |
-| 2 · `feature/windows-setup-wizard` | Guided installation, startup and beginner instructions | After phase 1 | — | Planned | [Windows installation](INSTALLATION.md) |
+| 1 · `feature/final-code-review` | Review core workflows, correct defects and enable feature CI | `358459a` | `f27873bea8fa861e8eca54dd0b4343604f9c963c` | Integration Verified | Date-scoped work periods and worksheet filters that survive an asynchronous refresh. [Feature diff](https://github.com/Marykamalaperli/Concept-Photography/compare/358459a...f27873b) |
+| 2 · `feature/windows-setup-wizard` | Guided installation, startup and beginner instructions | `f0bd6fdb36859e145ec43fd3bd5f4bc03ee1574f` | [Feature branch](https://github.com/Marykamalaperli/Concept-Photography/tree/feature/windows-setup-wizard) | Testing | Guided setup and isolated Windows configuration test. Device checks remain part of office acceptance. [Windows quick start](../START_HERE.md) |
 | 3 · `feature/security-hardening` | Authorization, employee privacy and negative tests | After phase 2 | — | Planned | [Operations and security](OPERATIONS.md) |
 | 4 · `feature/server-reliability` | Recovery, maintenance, logs and safe updates | After phase 3 | — | Planned | [Recovery procedures](OPERATIONS.md#backup-and-recovery) |
 | 5 · `feature/migration-rehearsal` | Synthetic legacy export, reconciliation and recovery exercise | After phase 4 | — | Planned | [Migration guide](MIGRATION.md) |
@@ -15,7 +15,8 @@
 
 | Feature | Test status | Pull request | Merge status | Integration commit and evidence |
 | --- | --- | --- | --- | --- |
-| Final code review | In progress | Pending | Pending | Pending |
+| Final code review | 37 tests passed and 51 axe views had zero violations. [Feature CI](https://github.com/Marykamalaperli/Concept-Photography/actions/runs/46144819933) | GitHub API blocked creation | Normal merge after confirming applicable rules | `f0bd6fdb36859e145ec43fd3bd5f4bc03ee1574f` · 37 tests and browser workflow passed. [Integration CI](https://github.com/Marykamalaperli/Concept-Photography/actions/runs/46144964518) |
+| Windows setup wizard | [Feature Actions](https://github.com/Marykamalaperli/Concept-Photography/actions?query=branch%3Afeature%2Fwindows-setup-wizard) | [Compare](https://github.com/Marykamalaperli/Concept-Photography/compare/self-hosted-workspace-migration...feature/windows-setup-wizard?expand=1) | Pending | Pending |
 
 ## Review and integration
 

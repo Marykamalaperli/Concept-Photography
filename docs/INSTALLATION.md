@@ -2,7 +2,7 @@
 
 Use these instructions after the branch passes review and the office deployment is approved. The office machine needs persistent local storage, a Windows account for running the workspace, and Node.js 24 or newer. Install Git for Windows and Node.js for all users, then open a new PowerShell window. [Node.js downloads](https://nodejs.org/en/download) · [Git for Windows](https://git-scm.com/install/windows)
 
-Use the [office network preflight and acceptance checklist](PRODUCTION_ACCEPTANCE.md) for the installation rehearsal. To see both portals without enrolling staff, run `npm.cmd ci` and `npm.cmd run demo` from the checkout. The command prints the loopback address and random credentials. Ctrl+C removes the temporary data.
+Use the [office network preflight and acceptance checklist](PRODUCTION_ACCEPTANCE.md) for the installation rehearsal. From a reviewed checkout, `scripts\setup-office.ps1 -CheckOnly` checks prerequisites. Running `scripts\setup-office.ps1` starts the temporary synthetic rehearsal and prints its address and credentials. Ctrl+C removes the temporary data. [Quick start](../START_HERE.md)
 
 ## Set up a local rehearsal
 

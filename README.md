@@ -18,6 +18,7 @@ For a guided rehearsal, run `npm ci` and `npm run demo`. Open the loopback addre
 
 ## Office deployment and operations
 
+- [Start here on Windows](START_HERE.md)
 - [Windows installation, HTTPS, startup and updates](docs/INSTALLATION.md)
 - [Legacy data export, rehearsal and migration](docs/MIGRATION.md)
 - [Office network preflight and production acceptance checklist](docs/PRODUCTION_ACCEPTANCE.md)
