@@ -137,7 +137,8 @@ test('workspace roles, personnel requests, crew attendance, payroll, and financi
     if (server && server.exitCode === null && server.signalCode === null) {
       const done = once(server, 'exit');
       server.kill();
-      await done;
+      const [code] = await done;
+      if (process.platform !== 'win32') assert.equal(code, 0, 'The workspace shuts down cleanly before restarting.');
     }
   }
 

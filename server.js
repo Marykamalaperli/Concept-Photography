@@ -26,7 +26,8 @@ if (process.platform !== 'win32') process.umask(0o077);
 const root = dirname(fileURLToPath(import.meta.url));
 const database = process.env.DATABASE_PATH || resolve(root, 'data/workforce.sqlite');
 if (database !== ':memory:') mkdirSync(dirname(database), { recursive: true });
-const db = sqliteAdapter(openStore(new DatabaseSync(database)));
+const connection = openStore(new DatabaseSync(database));
+const db = sqliteAdapter(connection);
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
 const publicOrigin = process.env.PUBLIC_ORIGIN && new URL(process.env.PUBLIC_ORIGIN);
@@ -187,33 +188,61 @@ const handle = async (req, res) => {
   }
 };
 
+const requests = new Set();
+function serve(req, res) {
+  const running = handle(req, res).finally(() => requests.delete(running));
+  requests.add(running);
+}
+
 const server = keyPath
-  ? createSecureServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, handle)
-  : createServer(handle);
-let checkingReminders = false;
-setInterval(async () => {
-  if (checkingReminders) return;
-  checkingReminders = true;
-  try {
+  ? createSecureServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, serve)
+  : createServer(serve);
+const maintenance = new Set();
+function schedule(interval, job, failure) {
+  let running;
+  return setInterval(() => {
+    if (running) return;
+    running = job().catch((error) => console.error(failure, error.code ?? error.name)).finally(() => {
+      maintenance.delete(running);
+      running = undefined;
+    });
+    maintenance.add(running);
+  }, interval).unref();
+}
+
+const timers = [
+  schedule(15_000, async () => {
     await refreshReminders(db);
     await refreshStudioNotices(db);
     await refreshAttendanceGaps(db);
     await mobilePush?.dispatch(db);
-  } catch (error) {
-    console.error('Could not refresh work reminders.', error.code ?? error.name);
-  } finally {
-    checkingReminders = false;
-  }
-}, 15000).unref();
-
-setInterval(async () => {
-  try {
+  }, 'Could not refresh work reminders.'),
+  schedule(60 * 60_000, async () => {
     await files?.prune();
     await minimizeHistoricalDetails(db);
-  } catch (error) {
-    console.error('Could not apply retention settings.', error.code ?? error.name);
-  }
-}, 60 * 60_000).unref();
+  }, 'Could not apply retention settings.'),
+];
+
+let stopping = false;
+function stop(signal) {
+  if (stopping) return;
+  stopping = true;
+  for (const timer of timers) clearInterval(timer);
+  console.log(`Workspace stopping after ${signal}.`);
+  server.close(async (error) => {
+    try {
+      await Promise.all([...maintenance, ...requests]);
+      connection.close();
+      if (error) throw error;
+      console.log('Workspace stopped. SQLite connection closed.');
+    } catch (failure) {
+      console.error('Workspace shutdown failed.', failure.code ?? failure.name);
+      process.exitCode = 1;
+    }
+  });
+}
+process.once('SIGINT', stop);
+process.once('SIGTERM', stop);
 
 server.listen(port, host, () => {
   const displayHost = host.includes(':') ? `[${host}]` : host;
